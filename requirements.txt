@@ -1,0 +1,8 @@
+# shelf çalışma zamanı bağımlılıkları
+PyMuPDF>=1.26        # PDF metin çıkarma
+textual>=8.0         # tam ekran terminal arayüzü
+rich>=13.0           # metin biçimlendirme (textual ile birlikte gelir)
+python-dotenv>=1.0   # .env dosyasından API anahtarı okuma
+
+# AI özellikleri için (isteğe bağlı; kurulmazsa arama yine çalışır)
+google-generativeai>=0.8

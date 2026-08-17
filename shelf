@@ -1,0 +1,24 @@
+#!/bin/sh
+# shelf - Siber Güvenlik Arşiv Arama Motoru
+# Paketi (shelflib) venv Python'u ile çalıştırır; venv yoksa sistem python3'e düşer.
+
+SELF=$0
+# Sembolik bağlantıysa gerçek hedefi bul
+while [ -L "$SELF" ]; do
+    LINK=$(readlink "$SELF")
+    case $LINK in
+        /*) SELF=$LINK ;;
+        *)  SELF=$(dirname -- "$SELF")/$LINK ;;
+    esac
+done
+DIR=$(CDPATH= cd -- "$(dirname -- "$SELF")" && pwd)
+
+if [ -x "$DIR/shelf-env/bin/python" ]; then
+    PY="$DIR/shelf-env/bin/python"
+else
+    PY=python3
+fi
+
+PYTHONPATH="$DIR${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH
+exec "$PY" -m shelflib "$@"

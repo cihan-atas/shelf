@@ -1,0 +1,37 @@
+# Gizli anahtarlar — asla depoya girmemeli
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# Sanal ortam
+shelf-env/
+venv/
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# shelf'in ürettiği veriler
+*.db
+*.db-wal
+*.db-shm
+*_log.txt
+
+# Arşivin kendisi asla depoya girmez
+hacking/
+arsiv/
+arşiv/
+*.pdf
+*.epub
+
+# Editör / işletim sistemi
+.vscode/
+.idea/
+*.swp
+.DS_Store
