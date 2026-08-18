@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """shelf'in tam ekran interaktif arayüzü (Textual)."""
 
+import collections
 import os
 import subprocess
 import sys
@@ -13,11 +14,15 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Input, OptionList, Static, Tree
+from textual.widgets import (Checkbox, Footer, Input, OptionList, RichLog,
+                             Static, Tree)
 from textual.widgets.option_list import Option
 
 from . import ai as ai_mod
+from . import config as config_mod
 from . import index as idx
+from . import keys as keys_mod
+from . import providers
 from . import search as search_mod
 
 HELP_TEXT = """\
@@ -31,6 +36,8 @@ HELP_TEXT = """\
 
 [b]Komutlar[/]
   Ctrl+A           Sonuçları yapay zeka ile alaka puanına göre sırala
+  F3               AI sağlayıcı, anahtar ve model ayarları
+  F4               Arşivi düzenle (kategorilendirme, kuru çalıştırma)
   F2               İçerik araması aç/kapat (dosya adı ↔ dosya içeriği)
   F5               Arşivi yeniden indeksle (değişenleri günceller)
   Ctrl+O           Seçili dosyanın klasörünü aç
@@ -75,6 +82,447 @@ class HelpScreen(ModalScreen):
     def action_dismiss_help(self) -> None:
         self.dismiss()
 
+class KeyPrompt(ModalScreen):
+    """Tek bir sağlayıcı için API anahtarı girişi."""
+
+    BINDINGS = [Binding("escape", "iptal", "Vazgeç")]
+
+    def __init__(self, saglayici):
+        super().__init__()
+        self.saglayici = saglayici
+        self.spec = providers.PROVIDERS[saglayici]
+
+    def compose(self) -> ComposeResult:
+        mevcut = keys_mod.get(self.saglayici)
+        with Vertical(id="key-box"):
+            yield Static(f"[b cyan]{self.spec.label}[/] API anahtarı", id="key-title")
+            yield Static(
+                f"[dim]{self.spec.free_note}[/]\n"
+                f"[dim]Anahtar alın:[/] [blue]{self.spec.signup_url}[/]",
+                id="key-note")
+            if mevcut:
+                yield Static(
+                    f"[dim]Kayıtlı:[/] [green]{keys_mod.maskele(mevcut)}[/]"
+                    f"  [dim](yeni değer eskisini değiştirir)[/]", id="key-current")
+            # password=True: anahtar ekranda açıkça görünmez
+            yield Input(placeholder=self.spec.env_var, password=True, id="key-input")
+            yield Static("[dim]⏎ kaydet ve dene · Esc vazgeç[/]", id="key-hint")
+
+    def on_mount(self) -> None:
+        self.query_one("#key-input", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self.dismiss((self.saglayici, event.value.strip()))
+
+    def action_iptal(self) -> None:
+        self.dismiss(None)
+
+
+class AIScreen(ModalScreen):
+    """AI sağlayıcı, anahtar ve model yönetimi."""
+
+    BINDINGS = [
+        Binding("escape,f3", "kapat", "Kapat"),
+        Binding("a", "anahtar", "Anahtar gir"),
+        Binding("s", "sil", "Anahtarı sil"),
+        Binding("m", "modeller", "Modelleri getir"),
+        Binding("d", "dene", "Bağlantıyı dene"),
+    ]
+
+    def __init__(self, cfg):
+        super().__init__()
+        self.cfg = cfg
+        self.modeller = []          # (saglayici, model) listesi
+        self._yukleniyor = False
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="ai-box"):
+            yield Static("[b cyan]AI sağlayıcıları[/]", id="ai-title")
+            with Horizontal(id="ai-cols"):
+                with Vertical(id="ai-left"):
+                    yield Static("[b]Sağlayıcı[/]  [dim](a: anahtar, s: sil)[/]")
+                    yield OptionList(id="ai-providers")
+                with Vertical(id="ai-right"):
+                    yield Static("[b]Model[/]  [dim](m: getir, ⏎: seç)[/]")
+                    yield OptionList(id="ai-models")
+            yield Static("", id="ai-status")
+            yield Static(
+                "[dim]a anahtar · s sil · d dene · m modeller · ⏎ seç · Esc kapat[/]",
+                id="ai-hint")
+
+    def on_mount(self) -> None:
+        self._saglayicilari_ciz()
+        self.query_one("#ai-providers", OptionList).focus()
+        self._durum(f"Etkin model: {self.cfg.get('ai_model')}")
+
+    # ---------- çizim ----------
+
+    def _saglayicilari_ciz(self) -> None:
+        olist = self.query_one("#ai-providers", OptionList)
+        secili = olist.highlighted
+        olist.clear_options()
+        etkin_s, _ = providers.parse_model(self.cfg.get("ai_model"))
+        for ad, spec, anahtar, _kaynak in keys_mod.durum():
+            if anahtar:
+                isaret = Text("✓ ", style="bold green")
+                deger = Text(keys_mod.maskele(anahtar), style="green")
+            else:
+                isaret = Text("· ", style="dim")
+                deger = Text("anahtar yok", style="dim")
+            satir = Text.assemble(
+                isaret, (spec.label.ljust(15), "bold"), " ", deger,
+                (" ← etkin", "magenta bold") if ad == etkin_s else "")
+            olist.add_option(Option(satir, id=ad))
+        if secili is not None and secili < olist.option_count:
+            olist.highlighted = secili
+
+    def _secili_saglayici(self):
+        olist = self.query_one("#ai-providers", OptionList)
+        if olist.highlighted is None:
+            return None
+        return olist.get_option_at_index(olist.highlighted).id
+
+    def _durum(self, metin, stil="") -> None:
+        self.query_one("#ai-status", Static).update(
+            Text(metin, style=stil) if stil else metin)
+
+    # ---------- eylemler ----------
+
+    def action_kapat(self) -> None:
+        self.dismiss(self.cfg)
+
+    def action_anahtar(self) -> None:
+        ad = self._secili_saglayici()
+        if ad:
+            self.app.push_screen(KeyPrompt(ad), self._anahtar_geldi)
+
+    def _anahtar_geldi(self, sonuc) -> None:
+        if not sonuc:
+            return
+        ad, anahtar = sonuc
+        if not anahtar:
+            self._durum("Boş anahtar — kaydedilmedi.", "yellow")
+            return
+        try:
+            keys_mod.set_(ad, anahtar)
+        except Exception as e:
+            self._durum(f"Kaydedilemedi: {e}", "red")
+            return
+        self._saglayicilari_ciz()
+        self._durum(f"{providers.PROVIDERS[ad].label} kaydedildi — deneniyor…")
+        self._dene_worker(ad)
+
+    def action_sil(self) -> None:
+        ad = self._secili_saglayici()
+        if not ad:
+            return
+        try:
+            if keys_mod.remove(ad):
+                self._saglayicilari_ciz()
+                self._durum(f"{providers.PROVIDERS[ad].label} anahtarı silindi.", "yellow")
+            else:
+                self._durum("Bu sağlayıcı için kayıtlı anahtar yok.", "dim")
+        except Exception as e:
+            self._durum(f"Silinemedi: {e}", "red")
+
+    def action_dene(self) -> None:
+        ad = self._secili_saglayici()
+        if ad:
+            self._durum(f"{providers.PROVIDERS[ad].label} deneniyor…")
+            self._dene_worker(ad)
+
+    def action_modeller(self) -> None:
+        ad = self._secili_saglayici()
+        if not ad:
+            return
+        if self._yukleniyor:
+            return
+        if not keys_mod.get(ad):
+            self._durum("Önce anahtar girin (a).", "yellow")
+            return
+        self._yukleniyor = True
+        self._durum(f"{providers.PROVIDERS[ad].label} modelleri getiriliyor…")
+        self._model_worker(ad)
+
+    def on_option_list_option_selected(self, event) -> None:
+        event.stop()
+        if event.option_list.id == "ai-providers":
+            self.action_modeller()
+        elif event.option_list.id == "ai-models":
+            secim = event.option_list.get_option_at_index(event.option_index).id
+            if secim:
+                self.cfg["ai_model"] = secim
+                config_mod.set_key("ai_model", secim)
+                self._saglayicilari_ciz()
+                self._durum(f"Etkin model: {secim}  (kaydedildi)", "green")
+
+    # ---------- arka plan işleri ----------
+
+    @work(thread=True, exclusive=True)
+    def _dene_worker(self, ad) -> None:
+        spec = providers.PROVIDERS[ad]
+        anahtar = keys_mod.get(ad)
+        model = spec.default_model
+        try:
+            if not model:
+                aday = [m for m in providers.build(ad, anahtar, "x").list_models()
+                        if providers.is_free(ad, m) and providers.looks_like_chat_model(m)]
+                if not aday:
+                    raise providers.ProviderError("denenecek ücretsiz model yok")
+                model = aday[0]
+            p = providers.build(ad, anahtar, model)
+            ai_mod.complete(p, "Yalnızca 'tamam' yaz.", retries=1)
+        except Exception as e:
+            self.app.call_from_thread(
+                self._durum, f"{spec.label}: {ai_mod.explain(e)}", "red")
+            return
+        self.app.call_from_thread(
+            self._durum, f"{spec.label} çalışıyor ✓  ({model})", "green")
+
+    @work(thread=True, exclusive=True)
+    def _model_worker(self, ad) -> None:
+        spec = providers.PROVIDERS[ad]
+        try:
+            p = providers.build(ad, keys_mod.get(ad), spec.default_model or "x")
+            adlar = [m for m in p.list_models() if providers.looks_like_chat_model(m)]
+        except Exception as e:
+            self.app.call_from_thread(self._model_hata, ai_mod.explain(e))
+            return
+        self.app.call_from_thread(self._modelleri_ciz, ad, adlar)
+
+    def _model_hata(self, mesaj) -> None:
+        self._yukleniyor = False
+        self._durum(f"Model listesi alınamadı — {mesaj}", "red")
+
+    def _modelleri_ciz(self, ad, adlar) -> None:
+        self._yukleniyor = False
+        spec = providers.PROVIDERS[ad]
+        olist = self.query_one("#ai-models", OptionList)
+        olist.clear_options()
+        etkin = self.cfg.get("ai_model")
+        # Ücretsiz ve önerilen modeller başa alınır; aranan genelde onlar
+        def anahtar_sirala(m):
+            return (not providers.is_free(ad, m), m not in spec.recommended, m)
+        for m in sorted(adlar, key=anahtar_sirala):
+            ref = providers.format_model(ad, m)
+            satir = Text(m)
+            if providers.is_free(ad, m):
+                satir.append("  ücretsiz", style="green")
+            if m in spec.recommended:
+                satir.append("  ★", style="yellow")
+            if ref == etkin:
+                satir.append("  ← etkin", style="magenta bold")
+            olist.add_option(Option(satir, id=ref))
+        self._durum(f"{spec.label}: {len(adlar)} model — ⏎ ile seçin")
+        if adlar:
+            olist.focus()
+
+
+class OrganizeScreen(ModalScreen):
+    """Arşiv düzenleme: kaynak/hedef seçimi, seçenekler, kuru çalıştırma ve uygulama."""
+
+    BINDINGS = [
+        Binding("escape", "kapat", "Kapat"),
+        Binding("f4", "kapat", "Kapat", show=False),
+        Binding("ctrl+r", "calistir", "Çalıştır", priority=True),
+    ]
+
+    def __init__(self, cfg):
+        super().__init__()
+        self.cfg = cfg
+        self._eylemler = None      # son kuru çalıştırmanın planı
+        self._calisiyor = False
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="org-box"):
+            yield Static("[b cyan]Arşivi düzenle[/]", id="org-title")
+            yield Static("[dim]Kaynak dizin[/]")
+            yield Input(placeholder="/yol/to/dagınık/dizin", id="org-source")
+            yield Static("[dim]Hedef arşiv[/]")
+            yield Input(placeholder=self.cfg.get("archive_dir") or "~/arsiv",
+                        id="org-target")
+            with Horizontal(id="org-opts"):
+                yield Checkbox("Kuru çalıştırma", value=True, id="org-dry")
+                yield Checkbox("Alt klasörler", value=True, id="org-rec")
+                yield Checkbox("Taşı (kopyalama)", value=False, id="org-move")
+            with Horizontal(id="org-opts2"):
+                yield Checkbox("AI ile yeniden adlandır", value=False, id="org-rename")
+                yield Checkbox("Sadece AI", value=False, id="org-aionly")
+                yield Checkbox("AI yok", value=False, id="org-noai")
+            with Horizontal(id="org-opts3"):
+                yield Static("[dim]Eşik:[/] ", id="org-th-label")
+                yield Input(value=str(self.cfg.get("organize_threshold", 15)),
+                            id="org-threshold")
+                yield Static(f"[dim]Model: {self.cfg.get('ai_model')}  (F3'ten değişir)[/]",
+                             id="org-model")
+            yield RichLog(id="org-log", highlight=False, markup=True, wrap=True)
+            yield Static(
+                "[dim]Ctrl+R çalıştır · Esc kapat  ·  kuru çalıştırma açıkken "
+                "hiçbir dosyaya dokunulmaz[/]", id="org-hint")
+
+    def on_mount(self) -> None:
+        kaynak = self.query_one("#org-source", Input)
+        kaynak.focus()
+        gunluk = self.query_one("#org-log", RichLog)
+        gunluk.write("[dim]Kaynak dizini yazıp Ctrl+R ile başlatın.[/]")
+        gunluk.write("[dim]Önce kuru çalıştırma yapın; sonuç iyiyse "
+                     "'Kuru çalıştırma'yı kapatıp tekrar çalıştırın.[/]")
+
+    # ---------- yardımcılar ----------
+
+    def _sec(self, kimlik) -> bool:
+        return self.query_one(f"#{kimlik}", Checkbox).value
+
+    def _yaz(self, metin) -> None:
+        self.query_one("#org-log", RichLog).write(metin)
+
+    def action_kapat(self) -> None:
+        if self._calisiyor:
+            self._yaz("[yellow]İşlem sürüyor — bitmesini bekleyin.[/]")
+            return
+        self.dismiss(None)
+
+    def action_calistir(self) -> None:
+        if self._calisiyor:
+            self._yaz("[yellow]Zaten çalışıyor.[/]")
+            return
+
+        kaynak = os.path.expanduser(self.query_one("#org-source", Input).value.strip())
+        hedef = os.path.expanduser(
+            self.query_one("#org-target", Input).value.strip()
+            or self.cfg.get("archive_dir") or "")
+
+        if not kaynak or not os.path.isdir(kaynak):
+            self._yaz(f"[red]Kaynak dizin bulunamadı:[/] {kaynak or '(boş)'}")
+            return
+        if not hedef:
+            self._yaz("[red]Hedef arşiv belirlenmedi.[/]")
+            return
+        if self._sec("org-aionly") and self._sec("org-noai"):
+            self._yaz("[red]'Sadece AI' ile 'AI yok' birlikte seçilemez.[/]")
+            return
+        try:
+            esik = int(self.query_one("#org-threshold", Input).value.strip() or 15)
+        except ValueError:
+            self._yaz("[red]Eşik bir sayı olmalı.[/]")
+            return
+
+        kuru = self._sec("org-dry")
+        if not kuru and self._sec("org-move"):
+            self._yaz("[yellow b]DİKKAT:[/] taşıma kipi — kaynak dosyalar "
+                      "yerinden alınacak.")
+
+        self._calisiyor = True
+        self._eylemler = None
+        self._yaz("")
+        self._yaz(f"[b]{'KURU ÇALIŞTIRMA' if kuru else 'UYGULANIYOR'}[/]  "
+                  f"{kaynak} → {hedef}")
+        self._is_worker(kaynak, hedef, esik, kuru)
+
+    # ---------- arka plan ----------
+
+    @work(thread=True, exclusive=True)
+    def _is_worker(self, kaynak, hedef, esik, kuru) -> None:
+        from . import organize as org
+        from .rules import Rules, RulesError
+
+        yaz = lambda m: self.app.call_from_thread(self._yaz, m)
+        try:
+            rules = Rules.load()
+        except RulesError as e:
+            yaz(f"[red]Kural dosyası okunamadı: {e}[/]")
+            self.app.call_from_thread(self._bitti)
+            return
+
+        dosyalar = org.list_source_files(kaynak, recursive=self._sec("org-rec"))
+        if not dosyalar:
+            yaz("[yellow]İşlenecek döküman bulunamadı.[/]")
+            self.app.call_from_thread(self._bitti)
+            return
+        yaz(f"{len(dosyalar)} dosya bulundu.")
+
+        provider = None
+        if not self._sec("org-noai"):
+            try:
+                provider = ai_mod.get_provider(self.cfg["ai_model"])
+                yaz(f"[dim]AI: {provider.label}[/]")
+            except ai_mod.AIError as e:
+                yaz(f"[yellow]AI devre dışı — {str(e).splitlines()[0]}[/]")
+
+        son = [0.0]
+
+        def ilerleme(i, toplam, ad, durum):
+            simdi = time.time()
+            if simdi - son[0] > 0.4 or i == toplam:
+                son[0] = simdi
+                self.app.call_from_thread(
+                    self._durum_yaz, f"[{i}/{toplam}] {durum}: {ad[:52]}")
+
+        try:
+            eylemler, hatalar = org.plan(
+                dosyalar, rules, hedef, provider=provider, threshold=esik,
+                rename=self._sec("org-rename"), progress=ilerleme,
+                ai_only=self._sec("org-aionly"))
+        except Exception as e:
+            yaz(f"[red]Planlama başarısız: {e}[/]")
+            self.app.call_from_thread(self._bitti)
+            return
+
+        self.app.call_from_thread(self._plan_bitti, eylemler, hatalar, kuru)
+
+        if not kuru:
+            try:
+                sonuc = org.apply(eylemler, move=self._sec("org-move"), dry_run=False)
+            except Exception as e:
+                yaz(f"[red]Uygulama başarısız: {e}[/]")
+                self.app.call_from_thread(self._bitti)
+                return
+            self.app.call_from_thread(self._uygulandi, sonuc)
+        else:
+            self.app.call_from_thread(self._bitti)
+
+    # ---------- ana iş parçacığı geri çağrıları ----------
+
+    def _durum_yaz(self, metin) -> None:
+        self.query_one("#org-log", RichLog).write(f"[dim]{metin}[/]")
+
+    def _plan_bitti(self, eylemler, hatalar, kuru) -> None:
+        from . import organize as org
+
+        self._eylemler = eylemler
+        ozet = org.summarize(eylemler)
+        self._yaz("")
+        self._yaz("[b cyan]Kategori dağılımı[/]")
+        for kat, bilgi in sorted(ozet.items(), key=lambda x: -x[1]["count"]):
+            kaynaklar = ", ".join(f"{n} {k}" for k, n in bilgi.items()
+                                  if k != "count" and n)
+            renk = "yellow" if kat == "KATEGORISIZ" else "green"
+            self._yaz(f"  [{renk}]{bilgi['count']:>4}[/]  {kat:<22} [dim]({kaynaklar})[/]")
+        if hatalar:
+            sayac = collections.Counter(hatalar)
+            self._yaz("")
+            self._yaz(f"[yellow]AI {len(hatalar)} kez sonuç veremedi:[/]")
+            for sebep, n in sayac.most_common(4):
+                self._yaz(f"  [yellow]{n}×  {sebep[:70]}[/]")
+        if kuru:
+            self._yaz("")
+            self._yaz("[b]Kuru çalıştırma bitti — hiçbir dosyaya dokunulmadı.[/]")
+            self._yaz("[dim]Uygulamak için 'Kuru çalıştırma'yı kapatıp Ctrl+R.[/]")
+
+    def _uygulandi(self, sonuc) -> None:
+        self._yaz("")
+        if isinstance(sonuc, dict):
+            for k, v in sonuc.items():
+                self._yaz(f"  [green]{k}[/]: {v}")
+        else:
+            self._yaz(f"  [green]{sonuc}[/]")
+        self._yaz("[b green]Tamamlandı.[/]")
+        self._bitti()
+
+    def _bitti(self) -> None:
+        self._calisiyor = False
+
 
 class ShelfApp(App):
     TITLE = "shelf"
@@ -103,6 +551,40 @@ class ShelfApp(App):
     #preview-meta { height: auto; color: $text-muted; }
     #preview-body { height: 1fr; }
 
+    #ai-box {
+        width: 92; height: auto; max-height: 80%; padding: 1 2;
+        border: thick $accent; background: $surface; margin: 2 4;
+    }
+    #ai-title { height: 1; }
+    #ai-cols { height: 16; }
+    #ai-left { width: 44; }
+    #ai-right { width: 1fr; }
+    #ai-providers, #ai-models { height: 1fr; border: solid $panel-lighten-2; }
+    #ai-status { height: auto; padding: 1 0 0 0; color: $text-muted; }
+    #ai-hint { height: 1; color: $text-muted; }
+
+    #key-box {
+        width: 74; height: auto; padding: 1 2;
+        border: thick $accent; background: $surface; margin: 4 6;
+    }
+    #key-title, #key-note, #key-current, #key-hint { height: auto; }
+    #key-note { padding: 1 0; }
+    #key-input { margin: 1 0 0 0; }
+
+    #org-box {
+        width: 100; height: 90%; padding: 1 2;
+        border: thick $accent; background: $surface; margin: 1 4;
+    }
+    #org-title { height: 1; }
+    #org-source, #org-target { height: 3; margin: 0 0 1 0; }
+    #org-opts, #org-opts2, #org-opts3 { height: 3; }
+    #org-opts Checkbox, #org-opts2 Checkbox { width: 1fr; }
+    #org-th-label { width: 8; padding: 1 0 0 0; }
+    #org-threshold { width: 12; }
+    #org-model { width: 1fr; padding: 1 0 0 2; }
+    #org-log { height: 1fr; border: solid $panel-lighten-2; margin: 1 0 0 0; }
+    #org-hint { height: 1; color: $text-muted; }
+
     #help-box {
         width: 78; height: auto; padding: 1 2;
         border: thick $accent; background: $surface;
@@ -117,6 +599,8 @@ class ShelfApp(App):
         Binding("f1,question_mark", "help", "Yardım"),
         Binding("ctrl+a", "ai_rank", "AI sırala", priority=True),
         Binding("f2", "toggle_content", "İçerik", priority=True),
+        Binding("f3", "ai_settings", "AI ayarları", priority=True),
+        Binding("f4", "organize", "Düzenle", priority=True),
         Binding("f5", "reindex", "İndeksle", priority=True),
         Binding("ctrl+o", "open_folder", "Klasör", priority=True),
         Binding("ctrl+y", "copy_path", "Yolu kopyala", priority=True),
@@ -402,6 +886,19 @@ class ShelfApp(App):
         self.content_mode = not self.content_mode
         self.notify("İçerik araması " + ("açıldı" if self.content_mode else "kapatıldı"))
         self.run_search()
+
+    def action_ai_settings(self) -> None:
+        """Sağlayıcı/anahtar/model ekranını açar."""
+        self.push_screen(AIScreen(self.cfg), self._ai_ayar_kapandi)
+
+    def _ai_ayar_kapandi(self, cfg) -> None:
+        if cfg:
+            self.cfg = cfg
+        self.set_status()
+
+    def action_organize(self) -> None:
+        """Arşiv düzenleme ekranını açar."""
+        self.push_screen(OrganizeScreen(self.cfg))
 
     def action_help(self) -> None:
         self.push_screen(HelpScreen())

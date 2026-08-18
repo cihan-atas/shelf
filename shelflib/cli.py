@@ -137,6 +137,9 @@ def build_parser(with_subcommands=True):
                        help="Dosyaları kopyalamak yerine taşır.")
     p_org.add_argument("-r", "--recursive", action="store_true",
                        help="Kaynak dizinin alt klasörlerini de tarar.")
+    p_org.add_argument("--ai-only", action="store_true", dest="ai_only",
+                       help="Kural puanlamasını yok sayar, her dosyayı AI'a sorar. "
+                            "(Kategori listesi yine kurallardan gelir.)")
     p_org.add_argument("--no-ai", action="store_true",
                        help="Kural puanı düşük kalsa bile AI'a sormaz.")
     p_org.add_argument("--rename", action="store_true",
@@ -345,6 +348,10 @@ def cmd_organize(args):
     if rules is None:
         return 1
 
+    if getattr(args, "ai_only", False) and args.no_ai:
+        _err("--ai-only ile --no-ai birlikte kullanılamaz.")
+        return 1
+
     cfg = resolve_cfg(args)
     source = os.path.expanduser(args.source_dir)
     if not os.path.isdir(source):
@@ -385,6 +392,7 @@ def cmd_organize(args):
 
     actions, ai_errors = org.plan(files, rules, target, provider=provider,
                                   threshold=cfg["organize_threshold"],
+                                  ai_only=getattr(args, "ai_only", False),
                                   rename=args.rename, progress=progress)
     _bar_done()
 

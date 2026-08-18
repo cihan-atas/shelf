@@ -26,7 +26,7 @@ Categories:
 {catalog}
 
 Filename: {name}
-Document text:
+Document structure (table of contents if available, otherwise opening text):
 ---
 {text}
 ---
@@ -106,6 +106,95 @@ def list_source_files(source_dir, extensions=DEFAULT_SOURCE_EXTS, recursive=Fals
     return found
 
 
+# ---------- içindekiler çıkarma ----------
+
+# Kitapların içindekiler sayfasını yakalayan başlıklar (İngilizce + Türkçe)
+_TOC_BASLIK = re.compile(
+    r"^\s*(table\s+of\s+contents|contents|içindekiler|icindekiler|"
+    r"table\s+des\s+matières|inhalt)\s*$", re.I | re.M)
+
+# "Bölüm adı .......... 42" biçimindeki içindekiler satırları
+_TOC_SATIR = re.compile(r"^.{3,90}?[\.\s]{4,}\d{1,4}\s*$", re.M)
+
+
+def _toc_gomulu(path, max_headings=120):
+    """PDF'in gömülü yer imi ağacından içindekiler üretir. Yoksa '' döner."""
+    if not idx.PYMUPDF_AVAILABLE:
+        return ""
+    try:
+        import pymupdf
+    except ImportError:
+        try:
+            import fitz as pymupdf
+        except ImportError:
+            return ""
+    try:
+        with pymupdf.open(path) as doc:
+            toc = doc.get_toc()
+    except Exception:
+        return ""
+    if not toc:
+        return ""
+    satirlar = []
+    for seviye, baslik, _sayfa in toc[:max_headings]:
+        baslik = " ".join(str(baslik).split())
+        if baslik:
+            satirlar.append("  " * (max(1, int(seviye)) - 1) + baslik)
+    return "\n".join(satirlar)
+
+
+def _toc_sayfadan(path, tara_sayfa=25):
+    """Baştaki sayfalarda 'Contents' başlıklı sayfayı arar. Yoksa '' döner."""
+    if not idx.PYMUPDF_AVAILABLE:
+        return ""
+    try:
+        import pymupdf
+    except ImportError:
+        try:
+            import fitz as pymupdf
+        except ImportError:
+            return ""
+    try:
+        with pymupdf.open(path) as doc:
+            parcalar = []
+            for no in range(min(tara_sayfa, len(doc))):
+                try:
+                    metin = doc[no].get_text()
+                except Exception:
+                    continue
+                if not metin:
+                    continue
+                # Ya "Contents" başlığı ya da nokta dolgulu satır yoğunluğu
+                if _TOC_BASLIK.search(metin) or len(_TOC_SATIR.findall(metin)) >= 5:
+                    parcalar.append(metin)
+                elif parcalar:
+                    break   # içindekiler bitti
+                if len(parcalar) >= 6:
+                    break
+    except Exception:
+        return ""
+    return "\n".join(parcalar).strip()
+
+
+def icindekiler(path, max_chars=3000):
+    """Sınıflandırma için dökümanın en bilgilendirici özetini döner.
+
+    Sırasıyla denenir:
+      1. PDF'in gömülü yer imleri (en temiz — arşivin ~%42'sinde var)
+      2. Baştaki sayfalarda 'Contents' başlıklı içindekiler sayfası
+      3. '' (çağıran ilk sayfalara düşer)
+
+    Tüm PDF'i taramak yerine yalnızca yapıya bakmak hem çok daha hızlı hem de
+    AI'a gönderilen bağlamı daraltıp isabeti artırır.
+    """
+    if not path.lower().endswith(".pdf"):
+        return ""
+    metin = _toc_gomulu(path)
+    if not metin:
+        metin = _toc_sayfadan(path)
+    return metin[:max_chars].strip()
+
+
 def _ai_category(provider, rules, name, text, errors=None):
     """AI'dan kategori kodu ister. (kod_veya_None) döner, hatayı errors'a yazar."""
     from . import ai as ai_mod
@@ -145,8 +234,15 @@ def _ai_rename(provider, category, name, text, errors=None):
 
 
 def plan(source_files, rules, target_dir, provider=None, threshold=12,
-         rename=False, max_pages=10, max_chars=8000, progress=None):
-    """Her dosya için nereye gideceğine karar verir. (actions, ai_hataları) döner."""
+         rename=False, max_pages=10, max_chars=8000, progress=None,
+         ai_only=False):
+    """Her dosya için nereye gideceğine karar verir. (actions, ai_hataları) döner.
+
+    ai_only=True ise anahtar kelime puanlaması karar için kullanılmaz; her dosya
+    AI'a sorulur. Kategori listesi ve klasör eşlemesi yine kurallardan gelir —
+    devre dışı kalan yalnızca puanlama. AI karar veremezse dosya Kategorisiz'e
+    düşer, kural puanına geri dönülmez.
+    """
     actions = []
     ai_errors = []
     total = len(source_files)
@@ -156,6 +252,7 @@ def plan(source_files, rules, target_dir, provider=None, threshold=12,
             progress(i, total, name, "inceleniyor")
 
         text = ""
+        ai_ozet = ""      # bu dosya için AI'a giden özet; her turda sıfırlanır
         if name.lower().endswith(TEXT_EXTS):
             text, _ = idx.extract_text(path, max_chars, max_pages)
 
@@ -163,12 +260,22 @@ def plan(source_files, rules, target_dir, provider=None, threshold=12,
         decided_by = "kural"
 
         # Kural puanı eşiğin altındaysa karar AI'a, o da yoksa Kategorisiz'e devredilir
-        if score < threshold:
+        if ai_only or score < threshold:
             ai_code = None
             if provider is not None:
                 if progress:
+                    progress(i, total, name, "içindekiler okunuyor")
+                # AI'a tüm metin yerine dökümanın iskeleti gönderilir: içindekiler
+                # konuyu ilk sayfalardan çok daha yoğun anlatır ve bağlamı daraltır.
+                ozet = icindekiler(path)
+                if ozet:
+                    ozet = "TABLE OF CONTENTS:\n" + ozet
+                else:
+                    ozet = text[:3000]
+                if progress:
                     progress(i, total, name, "AI'a soruluyor")
-                ai_code = _ai_category(provider, rules, name, text or name, ai_errors)
+                ai_ozet = ozet
+                ai_code = _ai_category(provider, rules, name, ozet or name, ai_errors)
             if ai_code:
                 category, decided_by = ai_code, "ai"
             else:
@@ -178,7 +285,8 @@ def plan(source_files, rules, target_dir, provider=None, threshold=12,
         if rename and provider is not None and text:
             if progress:
                 progress(i, total, name, "AI ad öneriyor")
-            suggested = _ai_rename(provider, category, name, text, ai_errors)
+            kaynak_metin = ai_ozet or icindekiler(path) or text
+            suggested = _ai_rename(provider, category, name, kaynak_metin, ai_errors)
             if suggested:
                 new_name = suggested
 
