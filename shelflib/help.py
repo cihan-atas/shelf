@@ -168,7 +168,7 @@ TEMEL KULLANIM
 KARAR NASIL VERİLİR
 
   1. Belgenin ilk 10 sayfası / 8000 karakteri çıkarılır.
-  2. 1459 anahtar kelime hem dosya adında hem metinde aranır.
+  2. 1459 anahtar kelime girdisi hem dosya adında hem metinde aranır.
      Ad eşleşmesi ağırlık x3, içerik eşleşmesi sıklığa göre x1/x2/x3.
   3. En yüksek puanlı kategori kazanır.
   4. Puan eşiğin (varsayılan 15) altındaysa karar AI'a devredilir.
@@ -322,12 +322,351 @@ PDF'ten metin çıkmıyor
 """)
 
 
+_konu("indeks", "İndeks iç yapısı", "SQLite FTS5, tokenizer, sıralama", """
+NEREDE
+  ~/.local/share/shelf/index.db   (shelf config --index-path ile değişir)
+
+  Silmek zararsızdır; 'shelf index' yeniden kurar. Arşivin kendisi asla
+  değiştirilmez, indeks salt okunur bir türevdir.
+
+ŞEMA
+  files       path, relpath, name, category, subcategory, size, pages,
+              mtime, sha (değişiklik tespiti için)
+  files_fts   FTS5 sanal tablosu: name, relpath, content
+
+  Tokenizer:  unicode61 remove_diacritics 2
+  Bu ayar Türkçe için önemlidir: "güvenlik" ile "guvenlik", "İSTANBUL"
+  ile "istanbul" aynı kabul edilir.
+
+SIRALAMA
+  bm25(files_fts, 12.0, 6.0, 1.0)
+
+  Üç sayı üç kolonun ağırlığıdır: dosya adı 12, göreli yol 6, içerik 1.
+  Yani sorgunun dosya adında geçmesi, içeride geçmesinden 12 kat
+  değerlidir. Bu yüzden "kerberos" araması önce adında Kerberos geçen
+  belgeleri getirir, sonra içinde geçenleri.
+
+SORGU ÇEVİRİSİ
+  Kullanıcı sorgusu doğrudan FTS5'e verilmez, güvenli bir ifadeye
+  çevrilir. Her terim tırnağa alınıp yıldız eklenir:
+
+    golden ticket        ->  "golden"* AND "ticket"*
+    "golden ticket"      ->  "golden ticket"*        (tırnak korunur)
+    CVE-2021-44228       ->  "CVE-2021-44228"*       (tire metin sayılır)
+
+  Tırnağa alma, tire/iki nokta/yıldız gibi karakterlerin FTS5
+  operatörü sanılmasını engeller. Yıldız önek eşleşmesi sağlar:
+  "kerber"* araması Kerberos ve Kerberoasting'i bulur.
+
+AND -> OR GERİ DÖNÜŞÜ
+  Önce tüm terimleri içerenler aranır. Sonuç sıfırsa aynı sorgu OR ile
+  tekrarlanır ve çıktıda "gevşek eşleşme" yazar. Türkçe sorgularda sık
+  görülür çünkü belgeler İngilizcedir.
+
+PARÇACIK (SNIPPET)
+  snippet(files_fts, 2, ..., ' … ', 14)
+  Eşleşen kelimenin çevresinden 14 kelimelik bağlam alınır ve eşleşen
+  kısım vurgulanır. Yalnızca içerik kolonundan (2 numaralı) çıkarılır.
+
+METİN ÇIKARMA SINIRLARI
+  index_max_pages   40      belge başına okunacak sayfa
+  index_max_chars   60000   belge başına saklanacak karakter
+
+  Bu sınırlar bilinçlidir: 400 sayfalık bir kitabın tamamını
+  indekslemek indeks boyutunu şişirir ve arama isabetini düşürür.
+  İlk 40 sayfa genelde içindekiler + giriş içerir, konuyu belirlemeye
+  yeter. Değiştirmek için ~/.shelfrc düzenlenir.
+
+ARTIMLI GÜNCELLEME
+  'shelf index' her dosyanın boyut ve değişiklik zamanına bakar;
+  değişmeyenleri atlar. 1180 belgelik arşivde ilk kurulum ~85 sn,
+  sonraki çalıştırmalar saniyenin altındadır.
+
+İNDEKSSİZ ÇALIŞMA ("live" kipi)
+  İndeks yoksa shelf dosya sistemini gezerek arar. Ad araması yine
+  hızlıdır ama içerik araması her PDF'i tek tek açmak zorunda kalır
+  ve dakikalar sürebilir. Çıktıda backend "live" olarak görünür.
+""")
+
+_konu("puanlama", "Kategori puanlaması", "Ağırlıklar, çarpanlar, eşik — matematiği", """
+FORMÜL
+
+  Her kategori için puan sıfırdan başlar. Kural dosyasındaki her
+  anahtar kelime için:
+
+    Dosya adında geçiyorsa   ->  puan += agirlik * 3
+    İçerikte n kez geçiyorsa ->  puan += agirlik * siklik_bonusu(n)
+
+  İkisi TOPLANIR, biri diğerinin yerine geçmez. Adında da içinde de
+  geçen bir kelime iki kez katkı verir.
+
+  siklik_bonusu(n):   n >= 10  ->  3
+                      n >=  3  ->  2
+                      aksi     ->  1
+
+  En yüksek puanlı kategori kazanır. Eşitlikte kural dosyasındaki
+  sıra belirleyicidir.
+
+AĞIRLIK MANTIĞI
+  Ağırlıklar ayırt ediciliğe göre elle verilmiştir:
+
+    10   Sertifika/sınav kodları: oscp, ccna, sy0-701, cissp, sec560
+         Başka hiçbir şeye benzemez, tek başına kesin karar verdirir.
+     5-6 Çok özgül teknik terimler: kerberoasting, mimikatz, hashcat,
+         process injection, maldev
+     3-4 Alan terimleri: sql injection, forensics, wpa2, docker
+     1-2 Genel kelimeler: security, hacking, network, cyber
+         Her belgede geçer, tek başına bir şey söylemez.
+
+  Bir sertifika kodu (10) dosya adında geçerse 10 x 3 = 30 puan
+  yapar ve 15'lik eşiği tek başına geçer. Genel bir kelime (1)
+  içerikte 2 kez geçerse 1 x 1 = 1 puan yapar, neredeyse etkisizdir.
+
+AYIRICI NORMALLEŞTİRME
+  Puanlamadan önce _ - . ( ) [ ] / , + karakterleri boşluğa çevrilir.
+  Sebep: Python'un \b kelime sınırı alt çizgiyi harf sayar, bu yüzden
+  "AD_PENTEST_Kerberoasting_Guide" içinde "kerberoasting" araması
+  eşleşmezdi. Normalleştirme bunu çözer.
+
+  Ayrıca çoğul toleransı vardır: kural setinde "forensic" varsa
+  "forensics" de eşleşir (5 harften uzun, tek kelimelik terimlerde).
+
+EŞİK
+  organize_threshold varsayılan 15.
+
+  Bu değer 1180 belgelik gerçek arşive karşı ölçülerek seçildi:
+  15'te belgelerin %94.6'sına kural karar veriyor, %5.4'ü AI'a
+  düşüyor. Eşiği yükseltmek AI'a daha çok iş verir (daha pahalı ama
+  belirsiz vakalarda daha isabetli), düşürmek kurala daha çok güvenir.
+
+    shelf organize ~/d --threshold 30
+    shelf config --show     (organize_threshold satırı)
+
+KURAL SETİ
+  shelflib/rules.json — 35 kategori, 1459 kelime girdisi
+  (1435 benzersiz; 24 kelime birden fazla kategoride farklı ağırlıkla
+  geçer, örneğin "forensics" hem FORENSICS_MALWARE hem CERT_ECCOUNCIL
+  altında bulunabilir).
+  İki bölüm: DIR_STRUCTURE (kategori -> klasör yolu) ve
+  KEYWORD_MAP (kategori -> {kelime: agirlik}).
+
+    shelf rules            eşlemeyi göster
+    shelf rules -k         kelimeleri de göster
+    shelf organize ~/d --rules kendi.json
+""")
+
+_konu("dosyalar", "Dosya ve dizinler", "shelf'in diske yazdığı her şey", """
+  ~/.shelfrc
+      Yapılandırma. JSON. Yalnızca varsayılandan FARKLI değerleri
+      saklar, bu yüzden genelde birkaç satırdır. Silmek her şeyi
+      varsayılana döndürür. İçinde API anahtarı YOKTUR, paylaşılabilir.
+
+  ~/.config/shelf/keys.env
+      API anahtarları. Dosya izni 0600, dizin izni 0700.
+      Biçim:  GROQ_API_KEY=gsk_...
+      Atomik yazılır (önce .tmp, sonra rename), yarım dosya oluşmaz.
+      ASLA paylaşmayın, depoya koymayın.
+
+  ~/.local/share/shelf/index.db
+      SQLite indeksi. Silmek zararsızdır.
+
+  <proje>/shelflib/rules.json
+      Kategori kuralları. Kendi kopyanızı --rules ile verebilirsiniz.
+
+  ANAHTAR ARAMA SIRASI (ilki kazanır)
+      1. Ortam değişkeni      GROQ_API_KEY, GOOGLE_API_KEY,
+                              OPENROUTER_API_KEY, NVIDIA_API_KEY
+      2. ~/.config/shelf/keys.env
+      3. Eski .env dosyaları  (arşiv dizini, çalışma dizini, proje kökü)
+
+      Üçüncü yol yalnızca geriye dönük uyumluluk içindir. Yeni
+      kurulumlarda 'shelf keys --set' kullanın.
+
+      Tek seferlik kullanım için:
+        GROQ_API_KEY=gsk_... shelf -q oscp -c --ai
+
+  ÇIKTI KODLARI
+      0   başarılı
+      1   hata (dizin yok, anahtar yok, geçersiz argüman, sonuç yok)
+
+      Betiklerde:  shelf -q kerberos --json || echo "bulunamadı"
+""")
+
+_konu("bayraklar", "Tam bayrak referansı", "Her komut, her seçenek", """
+ARAMA (alt komut yok)
+  -q, --query SORGU     Tek seferlik arama; arayüz açmadan basar
+  -c, --content         İçerikte ara (varsayılan: yalnızca dosya adı)
+  -k, --category AD     Aramayı bir üst kategoriyle sınırla
+  -n, --limit N         Azami sonuç ('hepsi' veya 0 = sınırsız)
+  -d, --dir YOL         Bu arama için arşiv dizinini değiştir
+      --ai              Sonuçları AI ile puanla ve yeniden sırala
+      --ai-limit N      AI kaç sonucu incelesin ('hepsi' = tümü)
+  -m, --model REF       Bu çalıştırma için model (saglayici:model)
+      --json            JSON çıktı
+  -V, --version         Sürüm
+
+index
+      --rebuild         İndeksi sıfırdan kur
+      --info            Durum bilgisi (belge sayısı, boyut, tarih)
+
+config
+      --archive YOL     Arşiv kök dizini
+      --index-path YOL  İndeks veritabanı yolu
+      --model REF       Varsayılan AI modeli
+      --limit N         Varsayılan sonuç limiti ('hepsi')
+      --ai-limit N      Varsayılan AI inceleme sayısı ('hepsi')
+      --show            Tüm ayarları göster
+
+organize KAYNAK
+  -t, --target YOL      Hedef arşiv (yoksa ayarlardaki archive_dir)
+  -n, --dry-run         Kuru çalıştırma — hiçbir dosyaya dokunmaz
+  -r, --recursive       Alt klasörleri de tara
+      --move            Kopyalamak yerine taşı
+      --rename          Adları AI ile yeniden üret
+      --ai-only         Kural puanlamasını yok say, hepsini AI'a sor
+      --no-ai           AI'a hiç sorma (yalnızca kural)
+      --threshold N     Kural/AI devir eşiği
+      --rules DOSYA     Alternatif kural dosyası
+      --no-reindex      İşlem sonrası indeksi güncelleme
+  -m, --model REF       Kullanılacak model
+
+duplicates
+      --prune           Kopyaları sil (onay ister)
+  -d, --dir YOL         Taranacak dizin
+
+keywords
+      --threshold N     "Kategorisiz" sayılma eşiği
+      --rules DOSYA     Kural dosyası
+
+rules
+  -k, --keywords        Her kategorinin anahtar kelimelerini de göster
+      --rules DOSYA     Kural dosyası
+
+keys
+      --set SAGLAYICI     Anahtar ekle/güncelle (gizli giriş)
+      --remove SAGLAYICI  Anahtarı sil
+      --test              Kayıtlı anahtarları gerçek istekle dene
+
+models
+  -p, --provider AD     Yalnızca bu sağlayıcı
+      --free            Yalnızca ücretsiz modeller
+  -a, --all             Sohbet dışı modelleri de göster
+
+help [KONU]             Konu listesi ya da konu metni
+""")
+
+_konu("guvenlik", "Güvenlik ve gizlilik", "Ne nereye gidiyor", """
+AI'A NE GÖNDERİLİYOR
+  Yalnızca AI özelliklerini kullandığınızda ve yalnızca şunlar:
+
+    --ai ile arama      : dosya adı + belge özetinin ilk 2500 karakteri
+    organize (kural yetmezse) : dosya adı + İÇİNDEKİLER (yoksa ilk
+                          3000 karakter)
+    --rename            : dosya adı + aynı özet + kategori kodu
+
+  Belgenin tamamı hiçbir zaman gönderilmez. AI kapalıyken
+  (--no-ai, ya da anahtar yoksa) hiçbir ağ isteği yapılmaz.
+
+  Sağlayıcıların veri saklama politikaları kendilerine aittir.
+  Hassas belgeler için --no-ai kullanın; arama, indeksleme ve kural
+  tabanlı kategorilendirme tamamen yereldir.
+
+ANAHTAR SAKLAMA
+  ~/.config/shelf/keys.env, izin 0600 (yalnızca siz okuyabilirsiniz).
+  Dizin izni 0700. Dosya atomik yazılır.
+  Anahtarlar ekrana hiçbir zaman tam basılmaz, maskelenir: gsk_BS…zrBa
+  'keys --set' girdiyi gizli okur, kabuk geçmişine düşmez.
+
+  Anahtarı komut satırında ortam değişkeni olarak verirseniz kabuk
+  geçmişinize yazılabilir; kalıcı kullanım için 'keys --set' tercih edin.
+
+VERİ BÜTÜNLÜĞÜ
+  organize varsayılan olarak KOPYALAR, taşımaz — kaynak korunur.
+  --move açıkça istenmelidir.
+  Hedefte aynı adda dosya varsa üzerine yazılmaz; içerik birebir
+  aynıysa atlanır, farklıysa ad çakışması çözülür.
+
+  duplicates --prune KALICI SİLME yapar:
+    - yalnızca SHA-256'sı birebir aynı olan dosyaları gruplar
+    - her gruptan birini korur (en kısa yol, sonra en kısa ad)
+    - interaktif "evet" onayı ister
+    - stdin bir terminal değilse çalışmayı reddeder (betikte kazara
+      silme olmasın diye)
+
+AĞ
+  İstemci standart kütüphanenin urllib'idir; ek HTTP bağımlılığı yok.
+  Zaman aşımı 90 saniye. Geçici hatalarda (429/500/502/503/504)
+  2 ve 4 saniye bekleyerek en fazla 3 deneme yapılır.
+""")
+
+_konu("performans", "Performans", "Ölçülmüş rakamlar ve darboğazlar", """
+  Aşağıdaki sayılar 1180 belgelik, 9.2 GB'lık gerçek bir arşivde
+  ölçülmüştür (NVMe SSD, 8 çekirdek).
+
+  İlk indeksleme            ~85 sn
+  Artımlı indeksleme        < 1 sn (değişen yoksa)
+  Ad araması                ~0.21 sn
+  İçerik araması (indeks)   ~0.15 sn
+  İçerik araması (indekssiz) dakikalar
+  Kopya taraması            ~0.15 sn
+
+  KOPYA TARAMASI NEDEN BU KADAR HIZLI
+    9.2 GB'ın tamamını hash'lemek dakikalar sürerdi. Bunun yerine
+    önce dosyalar BOYUTA göre gruplanır; tek başına kalan boyutlar
+    kopya olamayacağı için hiç okunmaz. Yalnızca aynı boyutta birden
+    fazla dosya varsa SHA-256 hesaplanır.
+
+  ORGANIZE DARBOĞAZI
+    AI değil, PDF metin çıkarma. 1180 belge için metin çıkarma
+    25-40 dakika sürer; AI çağrıları (kuralın karar veremediği ~64
+    belge) buna göre ihmal edilebilir.
+
+    --rename bunu değiştirir: her belge için bir AI çağrısı demektir,
+    yani 1180 çağrı. Ücretsiz katmanlarda kota bu noktada biter ve
+    kategorilendirmenin çağrılarını da aç bırakır. Bu yüzden büyük
+    arşivlerde kategorilendirme ile adlandırmayı AYRI koşularda yapın.
+
+  AI HIZI (ölçülen)
+    Groq openai/gpt-oss-120b    ~0.58 sn/istek
+    Gemini 3.5-flash-lite       ~1.2 sn/istek
+    Gemini 3.1-flash-lite       ~3.2 sn/istek
+
+  İNDEKS BOYUTU
+    index_max_chars 60000 ile 1180 belgelik arşiv ~40 MB'lık bir
+    indeks üretir. Sınırı yükseltmek indeksi büyütür ve bm25
+    sıralamasını genel kelimeler lehine bozabilir.
+""")
+
+
+GRUPLAR = [
+    ("Başlarken", ["baslangic", "arama", "kisayollar"]),
+    ("Günlük kullanım", ["ai", "duzenle", "bakim"]),
+    ("Referans", ["bayraklar", "ayarlar", "dosyalar"]),
+    ("Derinlemesine", ["indeks", "puanlama", "performans", "guvenlik"]),
+    ("Yardım", ["sorun"]),
+]
+
+
 def konu_listesi():
     genislik = max(len(a) for a in KONULAR)
-    satirlar = ["Ayrıntılı yardım konuları:", ""]
-    for ad, veri in KONULAR.items():
-        satirlar.append(f"  {ad.ljust(genislik)}  {veri['ozet']}")
-    satirlar += ["", "Kullanım:  shelf help <konu>", "Örnek:     shelf help arama"]
+    satirlar = ["shelf — ayrıntılı yardım konuları", ""]
+    for grup, adlar in GRUPLAR:
+        satirlar.append(f"{grup}")
+        for ad in adlar:
+            veri = KONULAR.get(ad)
+            if veri:
+                satirlar.append(f"  {ad.ljust(genislik)}  {veri['ozet']}")
+        satirlar.append("")
+    # Gruplara girmemiş konu kalırsa yine de görünsün
+    gruplu = {a for _, adlar in GRUPLAR for a in adlar}
+    kalan = [a for a in KONULAR if a not in gruplu]
+    if kalan:
+        satirlar.append("Diğer")
+        for ad in kalan:
+            satirlar.append(f"  {ad.ljust(genislik)}  {KONULAR[ad]['ozet']}")
+        satirlar.append("")
+    satirlar += ["Kullanım:  shelf help <konu>",
+                 "Örnek:     shelf help puanlama"]
     return "\n".join(satirlar)
 
 

@@ -95,9 +95,17 @@ class HelpScreen(ModalScreen):
         from . import help as help_mod
 
         olist = self.query_one("#help-topics", OptionList)
-        olist.add_option(Option(Text("Kısayollar", style="bold"), id="_tus"))
-        for ad, veri in help_mod.KONULAR.items():
-            olist.add_option(Option(Text(veri["baslik"]), id=ad))
+        olist.add_option(Option(Text("  Kısayollar", style="bold"), id="_tus"))
+        # CLI'daki 'shelf help' ile aynı gruplama kullanılır
+        for grup, adlar in help_mod.GRUPLAR:
+            varlar = [a for a in adlar if a in help_mod.KONULAR]
+            if not varlar:
+                continue
+            olist.add_option(Option(Text(grup, style="dim italic"), id=None,
+                                    disabled=True))
+            for ad in varlar:
+                olist.add_option(
+                    Option(Text("  " + help_mod.KONULAR[ad]["baslik"]), id=ad))
         olist.highlighted = 0
         olist.focus()
         self._goster("_tus")
