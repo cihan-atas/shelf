@@ -220,7 +220,11 @@ python3 tools/kucult.py ~/arsiv/hacking ~/arsiv/kucuk --uygula -j 8
 | Örneklem | Önce | Sonra | Kazanç |
 | --- | ---: | ---: | ---: |
 | 24 dosya, < 50 MB | 90 MB | 65 MB | %28 |
-| 5 dosya, > 40 MB | 440 MB | 203 MB | %54 |
+| 10 dosya, > 40 MB | 919 MB | 475 MB | %48 |
+
+Arşiv 41 büyük dosyada 3.2 GB, 1139 küçük dosyada 6.0 GB taşıyor. Bu iki oran
+kendi kütlelerine göre ağırlıklandırıldığında beklenen toplam sonuç
+**9.2 GB → yaklaşık 6 GB** (%35).
 
 Ortalama yanıltıcı — dağılım çok geniş:
 
@@ -229,7 +233,9 @@ Ortalama yanıltıcı — dağılım çok geniş:
 | `Mobile_Forensic_Investigations` | **%81 küçüldü** |
 | `WEB_API_Pentesting_Practical_Guide` | %75 küçüldü |
 | `MalDev_Academy_Malware_Forensics` | %52 küçüldü |
+| `CCNA_200_301_Official_Cert_Guide` | %78 küçüldü |
 | `CEHv13_Module06_System_Hacking` | değişmedi |
+| `Practical_Hacking_Techniques` (144 MB) | %2 — neredeyse değişmedi |
 | `AG_SIZMA_Network_Security_Hackers_Guide` | %80 **büyüdü** |
 | `CERT_DIGER_Hacking_Exposed_Windows` | %109 **büyüdü** |
 
@@ -241,7 +247,7 @@ büyütür. Bu yüzden araç her dosyayı tek tek ölçüp kararı dosya bazınd
 Metin katmanı korunur — dönüşüm sonrası sayfa metni birebir aynı kalır, dolayısıyla
 `shelf` indeksi ve araması etkilenmez. Kayıp, görsellerde olur: PNG ekran
 görüntüleri JPEG'e çevrildiği için terminal çıktısı içeren görsellerde okunabilirlik
-düşebilir. Arşivin tamamı için beklenen sonuç yaklaşık **9.2 GB → 4-4.5 GB**.
+düşebilir. Arşivin tamamı için beklenen sonuç yaklaşık **9.2 GB → 6 GB**.
 
 Kayıpsız alternatif olarak `qpdf --recompress-flate --compression-level=9
 --object-streams=generate` denenebilir; ölçümde %9 civarı kazanç verdi, görsellere
