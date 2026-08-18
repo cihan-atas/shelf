@@ -72,6 +72,8 @@ def uret(kok: Path) -> str:
         "`shelf` ile üretilen dizin yapısını gösterir."
     )
     sat.append("")
+
+    # --- özet tablo ---
     sat.append("| Kategori | Belge | Boyut |")
     sat.append("| --- | ---: | ---: |")
     for ust, altlar in agac.items():
@@ -81,25 +83,52 @@ def uret(kok: Path) -> str:
     sat.append(f"| **Toplam** | **{toplam_adet}** | **{insanca(toplam_boyut)}** |")
     sat.append("")
 
+    # --- klasör iskeleti: belge adları olmadan, tek bakışta yapı ---
+    sat.append("### Klasör yapısı")
+    sat.append("")
+    sat.append("```")
+    ust_adlar = list(agac)
+    for i, ust in enumerate(ust_adlar):
+        son_ust = i == len(ust_adlar) - 1
+        sat.append(f"{'└── ' if son_ust else '├── '}{ust}/")
+        devam = "    " if son_ust else "│   "
+        alt_adlar = list(agac[ust])
+        for j, alt in enumerate(alt_adlar):
+            son_alt = j == len(alt_adlar) - 1
+            sat.append(f"{devam}{'└── ' if son_alt else '├── '}{alt}/"
+                       f"  ({len(agac[ust][alt])})")
+    sat.append("```")
+    sat.append("")
+
+    # --- açılır kapanır tam liste ---
+    sat.append("### Belgeler")
+    sat.append("")
+    sat.append("Başlıklar açılıp kapanır: önce ana kategoriye, sonra alt kategoriye tıklayın.")
+    sat.append("")
     for ust, altlar in agac.items():
         adet = sum(len(v) for v in altlar.values())
-        sat.append(f"<details>")
-        sat.append(f"<summary><b>{baslik(ust)}</b> — {adet} belge</summary>")
+        boyut = sum(b for v in altlar.values() for _, b in v)
+        sat.append("<details>")
+        sat.append(f"<summary>📁 <b>{baslik(ust)}</b> — {adet} belge · "
+                   f"{insanca(boyut)}</summary>")
         sat.append("")
-        sat.append("```")
-        sat.append(baslik(ust))
-        alt_adlar = list(altlar)
-        for i, alt in enumerate(alt_adlar):
-            son_alt = i == len(alt_adlar) - 1
-            dal = "└── " if son_alt else "├── "
-            devam = "    " if son_alt else "│   "
-            sat.append(f"{dal}{baslik(alt)}/")
-            kitaplar = altlar[alt]
-            for j, (ad, boyut) in enumerate(kitaplar):
+        for alt, kitaplar in altlar.items():
+            alt_boyut = sum(b for _, b in kitaplar)
+            sat.append("<blockquote>")
+            sat.append("<details>")
+            sat.append(f"<summary>📂 <b>{baslik(alt)}</b> — {len(kitaplar)} belge · "
+                       f"{insanca(alt_boyut)}</summary>")
+            sat.append("")
+            sat.append("```")
+            sat.append(f"{baslik(alt)}/")
+            for j, (ad, boyut2) in enumerate(kitaplar):
                 uc = "└── " if j == len(kitaplar) - 1 else "├── "
-                sat.append(f"{devam}{uc}{ad}  ({insanca(boyut)})")
-        sat.append("```")
-        sat.append("")
+                sat.append(f"{uc}{ad}  ({insanca(boyut2)})")
+            sat.append("```")
+            sat.append("")
+            sat.append("</details>")
+            sat.append("</blockquote>")
+            sat.append("")
         sat.append("</details>")
         sat.append("")
     return "\n".join(sat).rstrip() + "\n"
