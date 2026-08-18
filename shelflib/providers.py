@@ -73,6 +73,7 @@ PROVIDERS = {
         free_note="Ücretsiz katman: günlük ve dakikalık istek sınırı var.",
         recommended=[
             "gemini-flash-latest",
+            "gemini-2.5-flash",
             "gemini-flash-lite-latest",
         ],
     ),
@@ -145,7 +146,10 @@ def _request(url, api_key, payload=None, extra_headers=None, method=None):
             body = e.read().decode("utf-8", "replace")[:400]
         except Exception:
             pass
-        message = _extract_error(body) or body or e.reason
+        try:
+            message = _extract_error(body) or body or e.reason
+        except Exception:
+            message = body or e.reason
         raise ProviderError(f"{e.code} {message}") from e
     except urllib.error.URLError as e:
         raise ProviderError(f"Bağlantı kurulamadı: {e.reason}") from e
@@ -154,13 +158,28 @@ def _request(url, api_key, payload=None, extra_headers=None, method=None):
 
 
 def _extract_error(body):
+    """Hata gövdesinden okunabilir mesajı çıkarır.
+
+    Sağlayıcılar hatayı tek biçimde döndürmez: sözlük, sözlük listesi ya da
+    düz metin gelebilir. Burada patlamak asıl hatayı gizlediği için her
+    biçim sessizce tolere edilir.
+    """
     try:
         data = json.loads(body)
     except Exception:
         return ""
+    if isinstance(data, list):
+        # Gemini kesinti sırasında [{"error": {...}}] biçiminde yanıt verebilir
+        for item in data:
+            mesaj = _extract_error(json.dumps(item))
+            if mesaj:
+                return mesaj
+        return ""
+    if not isinstance(data, dict):
+        return str(data)[:200]
     error = data.get("error")
     if isinstance(error, dict):
-        return error.get("message", "")
+        return error.get("message", "") or error.get("status", "")
     if isinstance(error, str):
         return error
     return data.get("message", "")
@@ -211,7 +230,9 @@ class Provider:
         for item in items:
             ident = item.get("id") if isinstance(item, dict) else None
             if ident:
-                names.append(ident)
+                # Gemini kimlikleri "models/..." önekiyle gelir; sohbet uç
+                # noktası her iki biçimi de kabul ettiği için sadeleştiriyoruz
+                names.append(ident[7:] if ident.startswith("models/") else ident)
         return sorted(names)
 
 

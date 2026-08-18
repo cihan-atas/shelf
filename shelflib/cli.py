@@ -10,6 +10,8 @@ from . import __version__
 from . import ai as ai_mod
 from . import config as config_mod
 from . import index as idx
+from . import keys as keys_mod
+from . import providers
 from . import search as search_mod
 from .rules import Rules, RulesError
 
@@ -36,6 +38,15 @@ ARŞİV BAKIMI:
   shelf duplicates                   Kopya dosyaları bulur
   shelf keywords                     Kategorisiz dosyalardan yeni kural önerir
   shelf rules                        Kategori şemasını listeler
+
+YAPAY ZEKA:
+-----------
+  shelf keys                         Anahtar durumunu gösterir
+  shelf keys --set groq              Groq anahtarını kaydeder
+  shelf keys --test                  Kayıtlı anahtarları gerçek istekle dener
+  shelf models                       Kullanılabilir modelleri listeler
+  shelf models -p openrouter --free  Yalnızca ücretsiz modelleri gösterir
+  shelf config --model groq:llama-3.3-70b-versatile
 """
 
 
@@ -59,7 +70,8 @@ def _err(msg):
     print(_c("Hata: ", "red", True) + msg, file=sys.stderr)
 
 
-COMMANDS = ("index", "config", "organize", "duplicates", "keywords", "rules")
+COMMANDS = ("index", "config", "organize", "duplicates", "keywords", "rules",
+            "keys", "models")
 
 
 def build_parser(with_subcommands=True):
@@ -164,6 +176,27 @@ def build_parser(with_subcommands=True):
     p_rules.add_argument("--rules", help="Kullanılacak kural dosyası (JSON).")
     p_rules.add_argument("-k", "--keywords", action="store_true",
                          help="Her kategorinin anahtar kelimelerini de listeler.")
+
+    p_keys = sub.add_parser(
+        "keys", help="API anahtarlarını yönetir.",
+        description="API anahtarlarını ~/.config/shelf/keys.env içinde saklar (izin 0600).")
+    p_keys.add_argument("--set", metavar="SAGLAYICI", dest="set_provider",
+                        choices=list(providers.PROVIDERS),
+                        help="Anahtar ekler/günceller (değer gizli olarak sorulur).")
+    p_keys.add_argument("--remove", metavar="SAGLAYICI", dest="remove_provider",
+                        choices=list(providers.PROVIDERS), help="Anahtarı siler.")
+    p_keys.add_argument("--test", action="store_true",
+                        help="Kayıtlı anahtarları gerçek istekle dener.")
+
+    p_models = sub.add_parser(
+        "models", help="Sağlayıcıların modellerini listeler.",
+        description="Sağlayıcıdan canlı model listesi çeker; ücretsizleri işaretler.")
+    p_models.add_argument("-p", "--provider", choices=list(providers.PROVIDERS),
+                          help="Yalnızca bu sağlayıcı (öntanımlı: anahtarı olan hepsi).")
+    p_models.add_argument("--free", action="store_true",
+                          help="Yalnızca ücretsiz modelleri göster.")
+    p_models.add_argument("-a", "--all", action="store_true",
+                          help="Sohbet dışı modelleri de göster (gömme, ses, görüntü).")
 
     return parser
 
@@ -663,7 +696,179 @@ def main(argv=None):
         return cmd_keywords(args)
     if args.command == "rules":
         return cmd_rules(args)
+    if args.command == "keys":
+        return cmd_keys(args)
+    if args.command == "models":
+        return cmd_models(args)
     return 0
+
+
+def cmd_keys(args):
+    """API anahtarlarını gösterir, ekler, siler veya dener."""
+    if args.set_provider:
+        return _keys_set(args.set_provider)
+    if args.remove_provider:
+        spec = providers.PROVIDERS[args.remove_provider]
+        if keys_mod.remove(args.remove_provider):
+            print(_c(f"{spec.label} anahtarı silindi.", "green"))
+            return 0
+        _err(f"{spec.label} için kayıtlı anahtar yok.")
+        return 1
+
+    print(f"{_c('Anahtar dosyası:', 'cyan', True)} {keys_mod.KEYS_PATH}"
+          f"{'' if os.path.exists(keys_mod.KEYS_PATH) else _c('  (henüz yok)', 'grey')}\n")
+
+    eksik = []
+    for ad, spec, anahtar, kaynak in keys_mod.durum():
+        if anahtar:
+            isaret = _c("✓", "green", True)
+            deger = _c(keys_mod.maskele(anahtar), "green")
+            nere = _c(f"({kaynak})", "grey")
+        else:
+            isaret = _c("·", "grey")
+            deger = _c("yok", "grey")
+            nere = ""
+            eksik.append((ad, spec))
+        print(f"  {isaret} {_c(spec.label.ljust(16), None, True)} {deger:<22} {nere}")
+        print(f"    {_c(spec.free_note, 'grey')}")
+
+    if args.test:
+        print()
+        return _keys_test()
+
+    if eksik:
+        print(_c("\nAnahtarı olmayan sağlayıcılar:", "yellow", True))
+        for ad, spec in eksik:
+            print(f"  {spec.label:<16} {_c(spec.signup_url, 'blue')}")
+            print(f"    {_c(f'shelf keys --set {ad}', 'grey')}")
+    return 0
+
+
+def _keys_set(saglayici):
+    import getpass
+
+    spec = providers.PROVIDERS[saglayici]
+    print(f"{_c(spec.label, 'cyan', True)}")
+    print(f"  {spec.free_note}")
+    print(f"  Anahtar alın: {_c(spec.signup_url, 'blue')}\n")
+    if not sys.stdin.isatty():
+        _err("Anahtar girişi terminal gerektirir.")
+        return 1
+    try:
+        anahtar = getpass.getpass(f"{spec.env_var} (girdi gizlidir): ").strip()
+    except (KeyboardInterrupt, EOFError):
+        print("\nİptal edildi.")
+        return 1
+    if not anahtar:
+        _err("Boş anahtar — bir şey kaydedilmedi.")
+        return 1
+    yol = keys_mod.set_(saglayici, anahtar)
+    print(_c(f"Kaydedildi: {yol}", "green", True) + _c("  (izin 0600)", "grey"))
+
+    print("Deneniyor...", end=" ", flush=True)
+    ok, mesaj = _dene(saglayici)
+    print(_c("çalışıyor", "green", True) if ok else _c(mesaj, "red"))
+    if ok:
+        varsayilan = providers.format_model(saglayici, spec.default_model) \
+            if spec.default_model else None
+        if varsayilan:
+            print(_c(f"  Kullanmak için: shelf config --model {varsayilan}", "grey"))
+        else:
+            print(_c(f"  Model seçmek için: shelf models -p {saglayici} --free", "grey"))
+    return 0 if ok else 1
+
+
+def _dene(saglayici):
+    """Sağlayıcıya küçük bir istek atar. (basarili, mesaj) döner."""
+    spec = providers.PROVIDERS[saglayici]
+    anahtar = keys_mod.get(saglayici)
+    if not anahtar:
+        return False, "anahtar yok"
+    model = spec.default_model
+    if not model:
+        try:
+            adaylar = [m for m in providers.build(saglayici, anahtar, "x").list_models()
+                       if providers.is_free(saglayici, m) and providers.looks_like_chat_model(m)]
+        except Exception as e:
+            return False, ai_mod.explain(e)
+        if not adaylar:
+            return False, "denenecek ücretsiz model bulunamadı"
+        model = adaylar[0]
+    try:
+        p = providers.build(saglayici, anahtar, model)
+        yanit = ai_mod.complete(p, "Yalnızca 'tamam' yaz.", retries=1)
+        return bool(yanit), yanit[:40] or "boş yanıt"
+    except Exception as e:
+        return False, ai_mod.explain(e, locals().get("p"))
+
+
+def _keys_test():
+    kayitli = [(ad, spec) for ad, spec, k, _ in keys_mod.durum() if k]
+    if not kayitli:
+        _err("Kayıtlı anahtar yok.")
+        return 1
+    print(_c("--- Anahtar denemesi ---", "cyan", True))
+    hata = 0
+    for ad, spec in kayitli:
+        print(f"  {spec.label:<16} ", end="", flush=True)
+        ok, mesaj = _dene(ad)
+        if ok:
+            print(_c("✓ çalışıyor", "green"))
+        else:
+            print(_c(f"✗ {mesaj}", "red"))
+            hata += 1
+    return 1 if hata else 0
+
+
+def cmd_models(args):
+    """Sağlayıcıların model listesini çeker."""
+    if args.provider:
+        hedefler = [args.provider]
+    else:
+        hedefler = [ad for ad, _, k, _ in keys_mod.durum() if k]
+        if not hedefler:
+            _err("Hiçbir sağlayıcı için anahtar yok.")
+            print("  'shelf keys' ile durumu görün.", file=sys.stderr)
+            return 1
+
+    cfg = config_mod.load()
+    etkin_s, etkin_m = providers.parse_model(cfg.get("ai_model"))
+    hata = 0
+
+    for ad in hedefler:
+        spec = providers.PROVIDERS[ad]
+        anahtar = keys_mod.get(ad)
+        print(f"\n{_c(spec.label, 'cyan', True)}  {_c(spec.base_url, 'grey')}")
+        if not anahtar:
+            print(_c(f"  anahtar yok — shelf keys --set {ad}", "yellow"))
+            hata += 1
+            continue
+        try:
+            p = providers.build(ad, anahtar, spec.default_model or "x")
+            modeller = p.list_models()
+        except Exception as e:
+            print(_c(f"  liste alınamadı — {ai_mod.explain(e)}", "red"))
+            hata += 1
+            continue
+
+        if not args.all:
+            modeller = [m for m in modeller if providers.looks_like_chat_model(m)]
+        if args.free:
+            modeller = [m for m in modeller if providers.is_free(ad, m)]
+        if not modeller:
+            print(_c("  (eşleşen model yok)", "grey"))
+            continue
+
+        for m in modeller:
+            bedava = providers.is_free(ad, m)
+            etiket = _c(" ücretsiz", "green") if bedava else ""
+            onerilen = _c(" ★", "yellow") if m in spec.recommended else ""
+            simdiki = _c(" ← etkin", "magenta", True) if (ad == etkin_s and m == etkin_m) else ""
+            print(f"  {providers.format_model(ad, m)}{etiket}{onerilen}{simdiki}")
+        print(_c(f"  {len(modeller)} model", "grey"))
+
+    print(_c("\nSeçmek için: shelf config --model SAGLAYICI:MODEL", "grey"))
+    return 1 if hata and len(hedefler) == hata else 0
 
 
 def _run_search(args):

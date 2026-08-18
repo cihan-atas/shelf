@@ -2,7 +2,7 @@
 PyMuPDF>=1.26        # PDF metin çıkarma
 textual>=8.0         # tam ekran terminal arayüzü
 rich>=13.0           # metin biçimlendirme (textual ile birlikte gelir)
-python-dotenv>=1.0   # .env dosyasından API anahtarı okuma
 
-# AI özellikleri için (isteğe bağlı; kurulmazsa arama yine çalışır)
-google-generativeai>=0.8
+# AI sağlayıcıları (Groq / OpenRouter / Gemini / NVIDIA) standart kütüphanenin
+# urllib'i ile sürülür — ek bir HTTP bağımlılığı yoktur. AI olmadan da arama,
+# indeksleme ve kural tabanlı kategorilendirme tam olarak çalışır.

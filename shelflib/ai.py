@@ -1,20 +1,17 @@
 # -*- coding: utf-8 -*-
 """AI alaka analizi katmanı.
 
-Şimdilik tek sağlayıcı (Google Gemini) var; sağlayıcı arayüzü çoklu model
-desteği eklenebilecek şekilde ayrıştırıldı.
+Sağlayıcıdan bağımsızdır: Groq, OpenRouter, Gemini ve NVIDIA'nın hepsi
+providers.py içindeki tek OpenAI uyumlu istemciyle sürülür. Bu modül yalnızca
+istemi kurar, yanıtı ayrıştırır ve hataları Türkçeye çevirir.
 """
 
 import json
-import os
 import re
 import time
 
-try:
-    from dotenv import load_dotenv
-    DOTENV_AVAILABLE = True
-except ImportError:
-    DOTENV_AVAILABLE = False
+from . import keys as keys_mod
+from . import providers
 
 PROMPT = """Sen bir siber güvenlik uzmanı asistanısın. Kullanıcı "{query}" konusunda araştırma yapıyor.
 Aşağıda bir dökümanın adı ve içerik özeti var. Bu dökümanın kullanıcının aramasıyla
@@ -33,38 +30,32 @@ class AIError(Exception):
     pass
 
 
-class GeminiProvider:
-    name = "gemini"
+def get_provider(model_reference):
+    """'groq:llama-3.3-70b' gibi bir referanstan istemci kurar.
 
-    def __init__(self, model_name):
-        try:
-            import google.generativeai as genai
-        except ImportError as e:
-            raise AIError("'google-generativeai' kütüphanesi kurulu değil.") from e
-        api_key = os.environ.get("GOOGLE_API_KEY")
-        if not api_key:
-            raise AIError("GOOGLE_API_KEY bulunamadı (.env dosyasına ekleyin).")
-        genai.configure(api_key=api_key)
-        self.model_name = model_name
-        self._model = genai.GenerativeModel(model_name)
+    Önek yoksa varsayılan sağlayıcı kullanılır. Anahtar keys modülünden gelir.
+    """
+    saglayici, model = providers.parse_model(model_reference)
+    spec = providers.PROVIDERS.get(saglayici)
+    if spec is None:
+        bilinen = ", ".join(providers.PROVIDERS)
+        raise AIError(f"Bilinmeyen sağlayıcı: {saglayici} (bilinenler: {bilinen})")
 
-    def complete(self, prompt):
-        resp = self._model.generate_content(prompt)
-        return (resp.text or "").strip()
+    api_key = keys_mod.get(saglayici)
+    if not api_key:
+        raise AIError(
+            f"{spec.label} için API anahtarı yok.\n"
+            f"  Anahtar alın : {spec.signup_url}\n"
+            f"  Sonra çalıştırın: shelf keys --set {saglayici}")
+    try:
+        return providers.build(saglayici, api_key, model)
+    except providers.ProviderError as e:
+        raise AIError(str(e)) from e
 
 
 def load_env():
-    if DOTENV_AVAILABLE:
-        # Önce çalışma dizini, sonra scriptin bulunduğu dizin
-        load_dotenv()
-        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        load_dotenv(os.path.join(here, ".env"))
-
-
-def get_provider(model_name):
-    """Model adına göre uygun sağlayıcıyı döner."""
-    load_env()
-    return GeminiProvider(model_name)
+    """Geriye dönük uyumluluk — anahtarlar artık keys modülünden okunur."""
+    return None
 
 
 def _parse(raw):
@@ -80,8 +71,9 @@ def _parse(raw):
     return max(0, min(10, score)), str(data.get("justification", "")).strip()
 
 
-RETRY_HINTS = ("429", "resourceexhausted", "quota", "rate limit",
-               "503", "unavailable", "deadline", "500", "internal")
+RETRY_HINTS = ("429", "resourceexhausted", "quota", "rate limit", "rate_limit",
+               "503", "unavailable", "deadline", "500", "internal",
+               "502", "504", "overloaded", "timed out", "timeout")
 
 
 def _is_retryable(exc):
@@ -92,22 +84,26 @@ def _is_retryable(exc):
 def explain(exc, provider=None):
     """Bir istisnayı kullanıcıya gösterilecek kısa Türkçe açıklamaya çevirir."""
     text = f"{type(exc).__name__} {exc}".lower()
-    if "429" in text or "quota" in text or "resourceexhausted" in text:
-        return "API kotası aşıldı — biraz bekleyip tekrar deneyin."
-    if "404" in text or "notfound" in text:
+    spec = getattr(provider, "spec", None)
+    etiket = spec.label if spec else "Sağlayıcı"
+
+    if "429" in text or "quota" in text or "rate limit" in text or "rate_limit" in text:
+        return f"{etiket} kotası aşıldı — bekleyin ya da başka sağlayıcıya geçin."
+    if "404" in text or "notfound" in text or "not found" in text:
         model = getattr(provider, "model_name", "?")
-        return f"Model bulunamadı: {model}"
-    if "permission" in text or "401" in text or "403" in text or "api key" in text:
-        return "API anahtarı reddedildi — GOOGLE_API_KEY'i kontrol edin."
+        ad = spec.name if spec else "?"
+        return f"Model bulunamadı: {model} ('shelf models --provider {ad}' ile listeleyin)"
+    if "401" in text or "403" in text or "permission" in text or "api key" in text:
+        ad = spec.name if spec else "?"
+        return f"{etiket} anahtarı reddedildi — 'shelf keys --set {ad}' ile yenileyin."
+    if "bağlantı kurulamadı" in text or "urlerror" in text:
+        return "Ağ bağlantısı kurulamadı."
     detail = " ".join(str(exc).split())[:110]
     return f"{type(exc).__name__}: {detail}"
 
 
 def complete(provider, prompt, retries=3):
-    """Sağlayıcıya istek atar; geçici hatalarda geri çekilerek yeniden dener.
-
-    Başarısız olursa son istisnayı yükseltir.
-    """
+    """Sağlayıcıya istek atar; geçici hatalarda geri çekilerek yeniden dener."""
     last = None
     for attempt in range(retries):
         try:
