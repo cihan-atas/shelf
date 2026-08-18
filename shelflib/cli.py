@@ -356,6 +356,7 @@ def cmd_organize(args):
     source = os.path.expanduser(args.source_dir)
     if not os.path.isdir(source):
         _err(f"Kaynak dizin bulunamadı: {source}")
+        _yol_ipucu(source)
         return 1
 
     target = os.path.expanduser(args.target_dir) if args.target_dir else cfg["archive_dir"]
@@ -459,6 +460,25 @@ def cmd_organize(args):
 
 
 # ---------- duplicates ----------
+
+def _yol_ipucu(yol):
+    """Yaygın kabuk alıntılama hatalarını teşhis edip ipucu basar.
+
+    En sık görüleni: tırnak İÇİNDE ters bölü ile kaçış. Kabuk tırnak içindeki
+    '\\ ' dizisini boşluğa çevirmez, ters bölü dosya adının parçası olur.
+    """
+    if "\\" not in yol:
+        return
+    duzeltilmis = yol.replace("\\", "")
+    if os.path.isdir(duzeltilmis):
+        print("  Yol ters bölü içeriyor; tırnak içinde kaçışa gerek yok.",
+              file=sys.stderr)
+        print(f"  Şunu deneyin: {_c(chr(34) + duzeltilmis + chr(34), 'green')}",
+              file=sys.stderr)
+    else:
+        print("  Yolda ters bölü var. Tırnak kullanıyorsanız kaçış eklemeyin;"
+              " kaçış kullanıyorsanız tırnak koymayın.", file=sys.stderr)
+
 
 def cmd_duplicates(args):
     from . import duplicates as dup

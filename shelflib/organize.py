@@ -32,17 +32,26 @@ Document structure (table of contents if available, otherwise opening text):
 ---
 The best category code is:"""
 
-RENAME_PROMPT = """You are a file organization assistant for a cybersecurity archive.
-Suggest a descriptive filename for the document below.
+RENAME_PROMPT = """You are cataloguing a cybersecurity archive. Write a filename that
+tells a reader exactly what this document contains, without opening it.
+
+The name must answer: what technology/target, and what aspect of it?
+Weak:   VMware_Escape.pdf
+Strong: BULUT_VMware_Workstation_USB_Controller_VM_Escape_Exploit.pdf
+Weak:   Networking_Zine.pdf
+Strong: AG_TEMELLERI_TCP_IP_Packet_Flow_Illustrated_Guide.pdf
 
 Rules:
-- English, Title_Case_With_Underscores, no spaces.
-- Concise but informative (max 70 characters), then the original extension.
-- No dates, no version numbers, no author names unless essential.
-- The document's category is '{category}'.
-Example: AD_PENTEST_Kerberoasting_Attack_Techniques.pdf
+- Start with the category code '{category}', then an underscore.
+- English, Title_Case_With_Underscores, no spaces, no punctuation except _ and .
+- Be specific: name the tool, protocol, CVE, technique or exam code when the
+  document is about one. Prefer 6-10 meaningful words over a short vague name.
+- Do not invent facts. If the document is a broad reference, say so
+  (e.g. Complete_Reference, Field_Manual, Cheatsheet).
+- 40-100 characters, then the original extension.
+- No dates, no edition numbers, no publisher names.
 
-Respond with ONLY the filename.
+Respond with the filename on a single line and nothing else.
 
 Current filename: {name}
 Document text:
@@ -214,6 +223,41 @@ def _ai_category(provider, rules, name, text, errors=None):
     return None
 
 
+# Dosya adına benzeyen satır: uzantıyla biten, boşluksuz, makul uzunlukta
+_AD_ADAYI = re.compile(r"[A-Za-z0-9][\w.+&()\-]{7,}\.[A-Za-z0-9]{2,5}$")
+
+
+def _ad_ayikla(raw):
+    """AI yanıtından dosya adını çıkarır.
+
+    Modeller adı bazen açıklama satırlarının arasına, bazen ters tırnak ya da
+    markdown içine koyar. İlk satırı körü körüne almak yerine dosya adına
+    benzeyen satırlar aranır ve en bilgilendirici olan seçilir.
+    """
+    if not raw:
+        return None
+    adaylar = []
+    for satir in raw.splitlines():
+        satir = satir.strip().strip("`").strip("*").strip().strip('"').strip("'")
+        satir = re.sub(r"^(filename|file name|answer|output)\s*[:\-]\s*", "",
+                       satir, flags=re.I).strip()
+        if not satir or " " in satir.strip() and not _AD_ADAYI.search(satir):
+            # boşluklu satır yalnızca ad gibi bitiyorsa değerlendirilir
+            parcalar = satir.split()
+            satir = parcalar[-1] if parcalar else ""
+        if _AD_ADAYI.search(satir):
+            adaylar.append(satir)
+    if not adaylar:
+        # hiç uzantılı aday yok: tek satırlık düz yanıt olabilir
+        ilk = raw.strip().splitlines()[0].strip().strip("`") if raw.strip() else ""
+        temiz = sanitize_filename(ilk)
+        return temiz if len(temiz) >= 8 else None
+    # en uzun aday genelde en açıklayıcı olanıdır
+    en_iyi = max(adaylar, key=len)
+    temiz = sanitize_filename(en_iyi)
+    return temiz if len(temiz) >= 8 else None
+
+
 def _ai_rename(provider, category, name, text, errors=None):
     """AI'dan yeni dosya adı ister; alınamazsa None döner."""
     from . import ai as ai_mod
@@ -224,8 +268,8 @@ def _ai_rename(provider, category, name, text, errors=None):
         if errors is not None:
             errors.append(ai_mod.explain(e, provider))
         return None
-    candidate = sanitize_filename(raw.splitlines()[0] if raw else "")
-    if not candidate or len(candidate) < 4:
+    candidate = _ad_ayikla(raw)
+    if not candidate:
         return None
     original_ext = os.path.splitext(name)[1]
     if not os.path.splitext(candidate)[1]:
