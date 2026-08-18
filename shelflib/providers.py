@@ -41,13 +41,13 @@ PROVIDERS = {
         label="Groq",
         base_url="https://api.groq.com/openai/v1",
         env_var="GROQ_API_KEY",
-        default_model="llama-3.3-70b-versatile",
+        default_model="openai/gpt-oss-20b",
         signup_url="https://console.groq.com/keys",
         free_note="Ücretsiz katman: kredi kartı istemez, dakikada sınırlı istek. Çok hızlı.",
         recommended=[
-            "llama-3.3-70b-versatile",
-            "llama-3.1-8b-instant",
             "openai/gpt-oss-20b",
+            "openai/gpt-oss-120b",
+            "qwen/qwen3.6-27b",
         ],
     ),
     "openrouter": ProviderSpec(
@@ -193,7 +193,7 @@ class Provider:
         self.name = spec.name
         self.api_key = api_key
         self.model_name = model or spec.default_model
-        if not self.model_name:
+        if not self.model_name and not getattr(self, "_liste_icin", False):
             raise ProviderError(
                 f"{spec.label} için model belirtilmedi. "
                 f"'shelf models --provider {spec.name}' ile listeleyin.")
@@ -236,6 +236,24 @@ class Provider:
         return sorted(names)
 
 
+def canli_model_sec(provider_name, api_key, tercih=None):
+    """Sağlayıcının canlı listesinden kullanılabilir bir sohbet modeli seçer.
+
+    Gömülü varsayılanlar zamanla eskiyor (sağlayıcılar model emekliye ayırıyor).
+    Bu yüzden bağlantı denemesi sabit bir ada güvenmek yerine listeye bakar.
+    """
+    spec = PROVIDERS[provider_name]
+    adaylar = [m for m in Provider(spec, api_key, "x").list_models()
+               if looks_like_chat_model(m)]
+    if not adaylar:
+        raise ProviderError("Kullanılabilir sohbet modeli bulunamadı.")
+    for aday in ([tercih] if tercih else []) + list(spec.recommended):
+        if aday in adaylar:
+            return aday
+    bedava = [m for m in adaylar if is_free(provider_name, m)]
+    return (bedava or adaylar)[0]
+
+
 def build(provider_name, api_key, model):
     spec = PROVIDERS.get(provider_name)
     if spec is None:
@@ -250,9 +268,13 @@ def build(provider_name, api_key, model):
 
 # ---------- model listesini süzme ----------
 
+# Sohbet tamamlama uç noktasıyla çalışmayan model aileleri. Canlı listeler
+# bunları da döndürür ama seçilirlerse istek 400/404 ile reddedilir.
 _CHAT_UNFRIENDLY = re.compile(
     r"(embed|embedding|rerank|whisper|tts|speech|audio|image|vision-only|"
-    r"guard|moderation|safety|ocr|video|imagen|veo|lyria|nano-banana)", re.I)
+    r"guard|moderation|safety|ocr|video|imagen|veo|lyria|nano-banana|"
+    r"live|realtime|translate|computer-use|robotics|deep-research|"
+    r"antigravity|orpheus|\baqa\b)", re.I)
 
 
 def looks_like_chat_model(name):

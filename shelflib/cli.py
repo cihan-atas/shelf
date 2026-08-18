@@ -100,6 +100,9 @@ def build_parser(with_subcommands=True):
     parser.add_argument("-n", "--limit", type=int, help="Maksimum sonuç sayısı.")
     parser.add_argument("--ai", action="store_true",
                         help="Sonuçları yapay zeka ile alaka puanına göre sıralar.")
+    parser.add_argument("--ai-limit", dest="ai_limit", metavar="N",
+                        help="AI'ın inceleyeceği sonuç sayısı. 'hepsi' ya da 0 "
+                             "tüm sonuçları tarar. (Ayarlardan: ai_max_candidates)")
     parser.add_argument("-m", "--model", help="Kullanılacak AI modeli.")
     parser.add_argument("--json", action="store_true", help="Çıktıyı JSON olarak verir.")
     parser.add_argument("-V", "--version", action="version", version=f"shelf {__version__}")
@@ -122,6 +125,8 @@ def build_parser(with_subcommands=True):
     p_cfg.add_argument("--model", help="Varsayılan AI modelini ayarlar.")
     p_cfg.add_argument("--index-path", help="İndeks veritabanının yolunu ayarlar.")
     p_cfg.add_argument("--limit", type=int, help="Varsayılan sonuç limitini ayarlar.")
+    p_cfg.add_argument("--ai-limit", dest="ai_limit", metavar="N",
+                       help="AI'ın inceleyeceği sonuç sayısı ('hepsi' = sınırsız).")
     p_cfg.add_argument("--show", action="store_true", help="Mevcut ayarları gösterir.")
 
     p_org = sub.add_parser(
@@ -212,6 +217,22 @@ def load_rules(args):
         return None
 
 
+def _ai_limit_coz(deger):
+    """--ai-limit değerini sayıya çevirir. 'hepsi'/'all'/0 -> sınırsız."""
+    if deger is None:
+        return None
+    metin = str(deger).strip().lower()
+    if metin in ("hepsi", "all", "tum", "tümü", "0"):
+        return 0
+    try:
+        n = int(metin)
+    except ValueError:
+        raise ValueError(f"--ai-limit sayı olmalı ya da 'hepsi': {deger}")
+    if n < 0:
+        raise ValueError("--ai-limit negatif olamaz.")
+    return n
+
+
 def resolve_cfg(args):
     cfg = config_mod.load()
     if getattr(args, "archive_dir", None):
@@ -220,6 +241,12 @@ def resolve_cfg(args):
         cfg["ai_model"] = args.model
     if getattr(args, "limit", None):
         cfg["limit"] = args.limit
+    if getattr(args, "ai_limit", None) is not None:
+        try:
+            cfg["ai_max_candidates"] = _ai_limit_coz(args.ai_limit)
+        except ValueError as e:
+            _err(str(e))
+            raise SystemExit(1)
     if getattr(args, "threshold", None):
         cfg["organize_threshold"] = args.threshold
     return cfg
@@ -303,6 +330,13 @@ def cmd_config(args):
     if args.limit:
         cfg["limit"] = args.limit
         changed = True
+    if getattr(args, "ai_limit", None) is not None:
+        try:
+            cfg["ai_max_candidates"] = _ai_limit_coz(args.ai_limit)
+        except ValueError as e:
+            _err(str(e))
+            return 1
+        changed = True
 
     if changed:
         path = config_mod.save(cfg)
@@ -315,6 +349,8 @@ def cmd_config(args):
                     "ai_max_candidates", "organize_threshold",
                     "index_max_pages", "index_max_chars"):
             val = cfg.get(key)
+            if key == "ai_max_candidates" and not val:
+                val = "hepsi (sınırsız)"
             marker = "" if val == config_mod.DEFAULTS.get(key) else _c(" *", "yellow")
             print(f"  {key:<18}: {val}{marker}")
         print(f"  {'extensions':<18}: {', '.join(cfg['extensions'])}")
@@ -650,7 +686,8 @@ def cmd_oneshot(args, cfg, query):
         except ai_mod.AIError as e:
             _err(str(e))
             return 1
-        subset = results[: cfg["ai_max_candidates"]]
+        azami = cfg["ai_max_candidates"]
+        subset = results if not azami else results[:azami]
         is_tty = sys.stderr.isatty()
 
         def progress(i, total, name):
@@ -661,7 +698,7 @@ def cmd_oneshot(args, cfg, query):
                     lambda r: search_mod.preview_text(cfg, r, 2500), progress)
         if is_tty:
             print("\r" + " " * 40 + "\r", end="", file=sys.stderr)
-        results = subset + results[cfg["ai_max_candidates"]:]
+        results = subset + ([] if not azami else results[azami:])
 
     if args.json:
         import json
@@ -812,16 +849,10 @@ def _dene(saglayici):
     anahtar = keys_mod.get(saglayici)
     if not anahtar:
         return False, "anahtar yok"
-    model = spec.default_model
-    if not model:
-        try:
-            adaylar = [m for m in providers.build(saglayici, anahtar, "x").list_models()
-                       if providers.is_free(saglayici, m) and providers.looks_like_chat_model(m)]
-        except Exception as e:
-            return False, ai_mod.explain(e)
-        if not adaylar:
-            return False, "denenecek ücretsiz model bulunamadı"
-        model = adaylar[0]
+    try:
+        model = providers.canli_model_sec(saglayici, anahtar, spec.default_model)
+    except Exception as e:
+        return False, ai_mod.explain(e)
     try:
         p = providers.build(saglayici, anahtar, model)
         yanit = ai_mod.complete(p, "Yalnızca 'tamam' yaz.", retries=1)

@@ -146,6 +146,11 @@ class AIScreen(ModalScreen):
                 with Vertical(id="ai-right"):
                     yield Static("[b]Model[/]  [dim](m: getir, ⏎: seç)[/]")
                     yield OptionList(id="ai-models")
+            with Horizontal(id="ai-limit-row"):
+                yield Static("[b]AI kaç sonucu incelesin:[/] ", id="ai-limit-label")
+                yield Input(value=str(self.cfg.get("ai_max_candidates") or "hepsi"),
+                            id="ai-limit-input")
+                yield Static("[dim]sayı ya da 'hepsi' · ⏎ kaydet[/]", id="ai-limit-hint")
             yield Static("", id="ai-status")
             yield Static(
                 "[dim]a anahtar · s sil · d dene · m modeller · ⏎ seç · Esc kapat[/]",
@@ -245,6 +250,26 @@ class AIScreen(ModalScreen):
         self._durum(f"{providers.PROVIDERS[ad].label} modelleri getiriliyor…")
         self._model_worker(ad)
 
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id != "ai-limit-input":
+            return
+        event.stop()
+        ham = event.value.strip().lower()
+        if ham in ("hepsi", "all", "tum", "tümü", "0", ""):
+            deger = 0
+        else:
+            try:
+                deger = int(ham)
+                if deger < 0:
+                    raise ValueError
+            except ValueError:
+                self._durum("Sayı ya da 'hepsi' yazın.", "red")
+                return
+        self.cfg["ai_max_candidates"] = deger
+        config_mod.set_key("ai_max_candidates", deger)
+        nasil = "tüm sonuçlar" if not deger else f"ilk {deger} sonuç"
+        self._durum(f"AI {nasil} inceleyecek  (kaydedildi)", "green")
+
     def on_option_list_option_selected(self, event) -> None:
         event.stop()
         if event.option_list.id == "ai-providers":
@@ -263,14 +288,9 @@ class AIScreen(ModalScreen):
     def _dene_worker(self, ad) -> None:
         spec = providers.PROVIDERS[ad]
         anahtar = keys_mod.get(ad)
-        model = spec.default_model
         try:
-            if not model:
-                aday = [m for m in providers.build(ad, anahtar, "x").list_models()
-                        if providers.is_free(ad, m) and providers.looks_like_chat_model(m)]
-                if not aday:
-                    raise providers.ProviderError("denenecek ücretsiz model yok")
-                model = aday[0]
+            # Gömülü varsayılan emekliye ayrılmış olabilir; canlı listeden seç
+            model = providers.canli_model_sec(ad, anahtar, spec.default_model)
             p = providers.build(ad, anahtar, model)
             ai_mod.complete(p, "Yalnızca 'tamam' yaz.", retries=1)
         except Exception as e:
@@ -560,6 +580,10 @@ class ShelfApp(App):
     #ai-left { width: 44; }
     #ai-right { width: 1fr; }
     #ai-providers, #ai-models { height: 1fr; border: solid $panel-lighten-2; }
+    #ai-limit-row { height: 3; }
+    #ai-limit-label { width: 26; padding: 1 0 0 0; }
+    #ai-limit-input { width: 16; }
+    #ai-limit-hint { width: 1fr; padding: 1 0 0 2; color: $text-muted; }
     #ai-status { height: auto; padding: 1 0 0 0; color: $text-muted; }
     #ai-hint { height: 1; color: $text-muted; }
 
@@ -960,14 +984,15 @@ class ShelfApp(App):
             self.call_from_thread(self.notify, str(e), severity="error")
             return
 
-        subset = self.results[: self.cfg["ai_max_candidates"]]
+        azami = self.cfg.get("ai_max_candidates") or 0
+        subset = self.results if not azami else self.results[:azami]
 
         def progress(i, total, name):
             self.call_from_thread(self._set_busy, f"AI analizi {i}/{total} — {name[:36]}")
 
         ai_mod.rank(provider, query, subset,
                     lambda r: search_mod.preview_text(self.cfg, r, 2500), progress)
-        rest = self.results[self.cfg["ai_max_candidates"]:]
+        rest = [] if not azami else self.results[azami:]
         self.call_from_thread(self._apply_ai, subset + rest)
 
     def _apply_ai(self, results) -> None:
