@@ -15,7 +15,11 @@ DEFAULTS = {
     "index_max_chars": 60000,
     "index_max_pages": 40,
     "limit": 200,
-    "ai_model": "gemini-flash-latest",
+    # Flash-Lite takma adı bilinçli seçildi: Gemini'nin ücretsiz katmanında
+    # gerçekten kotası olan aile bu. "gemini-flash-latest" en yeni Flash'a
+    # işaret ediyor ve ücretsiz katmanda günde 20 istekte tükeniyor.
+    # "-latest" takma adı sayesinde sürüm emekliye ayrılsa da kırılmaz.
+    "ai_model": "gemini-flash-lite-latest",
     "ai_max_candidates": 20,
     # Kural puanı bu eşiğin altında kalırsa karar AI'a devredilir. 1180 dosyalık
     # arşive karşı ölçüldü: 15'te dosyaların ~%76'sına kural karar veriyor.

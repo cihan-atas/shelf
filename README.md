@@ -17,7 +17,7 @@ yerleştirir.
 │                │                      │ ─────────────  │
 │                │                      │ AI: 9/10      │
 ├────────────────┴──────────────────────┴───────────────┤
-│ ↑↓ gez  ⏎ aç  ^A AI  F2 içerik  F5 indeks  ? yardım   │
+│ ↑↓ gez ⏎ aç ^A AI F2 içerik F3 model F4 düzenle ? yardım│
 └───────────────────────────────────────────────────────┘
 ```
 
@@ -28,7 +28,10 @@ yerleştirir.
 - **Tam ekran arayüz** — yazdıkça daralan sonuçlar, kategori ağacı, yan panelde
   döküman önizlemesi, aranan terimlerin vurgulanması.
 - **AI ile anlamsal sıralama** — sonuçları "bu sorguya ne kadar uyuyor" diye
-  puanlatıp yeniden sıralar, gerekçesini yazar.
+  puanlatıp yeniden sıralar, gerekçesini Türkçe yazar.
+- **Dört AI sağlayıcısı** — Groq, OpenRouter, Google Gemini ve NVIDIA NIM.
+  Dördü de OpenAI uyumlu API sunduğu için tek istemciyle sürülür; anahtarlar
+  araç içinden eklenir, modeller canlı listeden seçilir.
 - **Otomatik düzenleme** — yeni dökümanları ağırlıklı anahtar kelime puanlamasıyla
   kategorilere yerleştirir; puan zayıfsa kararı AI'a devreder, isteğe bağlı olarak
   dosya adlarını da yeniden yazar.
@@ -36,6 +39,8 @@ yerleştirir.
   yalnızca adayları okuduğu için gigabaytlarca arşivde bile saniyeler sürer.
 - **Kural önerisi** — hiçbir kategoriye oturmayan dosyalardan sık geçen terimleri
   çıkarıp kural setine eklenecek adayları listeler.
+- **Kapsamlı yardım** — `shelf help` ile 14 konuda ayrıntılı anlatım: arama
+  operatörlerinden puanlama matematiğine, FTS5 iç yapısından sorun gidermeye.
 
 Arama ve düzenlemenin kural tarafı **API anahtarı olmadan da tam olarak çalışır**;
 anahtar yalnızca AI özelliklerini açar.
@@ -57,12 +62,17 @@ ln -s "$PWD/shelf" ~/.local/bin/shelf
 bağlantı üzerinden çağrıldığında da doğru dizini çözer. Sanal ortam yoksa sistem
 `python3`'üne düşer.
 
-AI özelliklerini kullanacaksanız:
+AI özelliklerini kullanacaksanız bir sağlayıcı anahtarı ekleyin (hepsinin
+ücretsiz katmanı var):
 
 ```bash
-cp .env.example .env
-$EDITOR .env          # GOOGLE_API_KEY satırını doldurun
+shelf keys --set groq     # https://console.groq.com/keys
+shelf keys --test         # çalıştığını doğrula
 ```
+
+Anahtarlar `~/.config/shelf/keys.env` içinde `0600` izniyle saklanır, ayar
+dosyanızdan ayrıdır. `shelf keys` desteklenen sağlayıcıları ve kayıt
+adreslerini listeler.
 
 ## İlk çalıştırma
 
@@ -70,6 +80,14 @@ $EDITOR .env          # GOOGLE_API_KEY satırını doldurun
 shelf config --archive ~/arsiv    # arşiv dizinini bir kez tanıt
 shelf index                       # dökümanları indeksle
 shelf                             # arayüzü aç
+```
+
+AI olmadan da her şey çalışır. Açmak isterseniz:
+
+```bash
+shelf keys --set groq                          # anahtar ekle
+shelf models -p groq                           # kullanılabilir modelleri gör
+shelf config --model groq:openai/gpt-oss-20b   # birini seç
 ```
 
 İndeksleme 1180 PDF'lik bir arşivde ~85 saniye sürer. Sonraki `shelf index`
@@ -86,12 +104,14 @@ shelf                             # arayüzü aç
 | `↑` `↓` | Sonuçlar arasında gezinir (arama kutusundayken de çalışır) |
 | `Enter` | Seçili dökümanı varsayılan uygulamada açar |
 | `F2` | İçerik aramasını açar/kapatır (dosya adı ↔ döküman içeriği) |
-| `Ctrl+A` | Sonuçları AI ile alaka puanına göre sıralar |
+| `F3` | AI ayarları: sağlayıcı, anahtar, model, tarama sınırı |
+| `F4` | Arşivi düzenle: kaynak/hedef, kuru çalıştırma, canlı ilerleme |
 | `F5` | Arşivi yeniden indeksler |
+| `Ctrl+A` | Sonuçları AI ile alaka puanına göre sıralar |
 | `Ctrl+O` | Seçili dosyanın klasörünü açar |
 | `Ctrl+Y` | Seçili dosyanın tam yolunu panoya kopyalar |
 | `Esc` | Arama kutusuna döner / kategori filtresini temizler |
-| `F1` veya `?` | Yardım ekranı |
+| `F1` veya `?` | Yardım — solda konu listesi, sağda kaydırılabilir metin |
 | `Ctrl+C` | Çıkış |
 
 Soldaki ağaçtan bir kategori seçerek aramayı o dala daraltabilirsiniz.
@@ -107,8 +127,10 @@ shelf kerberos                     # arayüzü bu sorguyla açar
 shelf -q kerberos                  # tek seferlik arama, basar ve çıkar
 shelf -q "CVE-2021-44228" -c       # içerikte arar
 shelf -q "domain controller" --ai  # AI sıralamalı
-shelf -q ldap --json               # script/pipe için JSON çıktı
+shelf -q ldap -c --json            # script/pipe için JSON çıktı
 shelf -q xss -k 01_OFANSIF_GUVENLIK_'(RED_TEAM)'   # kategoriyle sınırlar
+shelf -q oscp -c -n hepsi          # tüm sonuçlar (varsayılan 200)
+shelf -q oscp -c --ai --ai-limit 10   # AI yalnızca ilk 10'u incelesin
 ```
 
 Birden çok terim verildiğinde hepsini birden içeren dökümanlar aranır. Hiçbiri
@@ -118,9 +140,11 @@ bulunamazsa arama otomatik olarak "terimlerden herhangi biri"ne gevşer ve bunu
 ### Arşiv bakımı
 
 ```bash
-shelf organize ~/Indirilenler      # dökümanları kategorilere yerleştirir
-shelf organize ~/Indirilenler -n   # önce ne yapacağını gösterir
-shelf organize ~/Indirilenler --move --rename
+shelf organize ~/Indirilenler -n   # ÖNCE kuru çalıştırma — hiçbir şeye dokunmaz
+shelf organize ~/Indirilenler      # dökümanları kategorilere kopyalar
+shelf organize ~/dizin --move --rename    # taşı ve adları AI ile yenile
+shelf organize ~/dizin --threshold 30     # kural daha az karar versin
+shelf organize ~/dizin --no-ai            # yalnızca kural, ağ isteği yok
 shelf duplicates                   # kopya dosyaları bulur
 shelf duplicates --prune -n        # fazlalıkları listeler (silmez)
 shelf keywords --content           # yeni kural adayları önerir
@@ -129,7 +153,37 @@ shelf rules -k                     # kategori şemasını ve kurallarını göst
 
 `organize` varsayılan olarak **kopyalar**, taşımaz; `--move` ile taşır. Her zaman
 önce `-n` (kuru çalıştırma) ile ne olacağını görün. `duplicates --prune` gerçekten
-siler ve onay ister.
+siler, interaktif onay ister ve terminal yoksa çalışmayı reddeder.
+
+`--rename` her döküman için ayrı bir AI çağrısı demektir. Büyük arşivlerde
+kategorilendirmenin kotasını tüketebileceği için önce kategorilendirin,
+adlandırmayı ayrı bir koşuda yapın.
+
+### Yapay zeka yönetimi
+
+```bash
+shelf keys                         # anahtar durumu ve kayıt adresleri
+shelf keys --set groq              # anahtar ekle (gizli giriş, otomatik dener)
+shelf keys --test                  # kayıtlı anahtarları gerçek istekle dener
+shelf models                       # anahtarı olan sağlayıcıların modelleri
+shelf models -p openrouter --free  # yalnızca ücretsiz modeller
+shelf config --model groq:openai/gpt-oss-20b
+shelf config --ai-limit 50         # AI kaç sonucu incelesin
+```
+
+Model listesi sohbet tamamlamayla çalışmayan aileleri (gömme, ses, görüntü,
+çeviri, robotik) otomatik eler. `★` önerilenleri, `ücretsiz` etiketi bedava
+olanları gösterir.
+
+### Yardım
+
+```bash
+shelf help                # 14 konunun listesi
+shelf help arama          # arama kipleri, operatörler, limit
+shelf help puanlama       # kategori puanlamasının matematiği
+shelf help indeks         # FTS5 şeması, tokenizer, bm25 ağırlıkları
+shelf help sorun          # sık karşılaşılan hatalar
+```
 
 Ayrıntılar için [docs/kullanim.md](docs/kullanim.md).
 
@@ -145,21 +199,35 @@ Ayrıntılar için [docs/kullanim.md](docs/kullanim.md).
 | Düzenleme | `shelflib/organize.py` | Kategorilendirme, yeniden adlandırma |
 | Kopyalar | `shelflib/duplicates.py` | Boyut eleme + SHA-256 |
 | Kural önerisi | `shelflib/keywords.py` | Terim çıkarımı |
-| AI | `shelflib/ai.py` | Sağlayıcı arayüzü, yeniden deneme |
+| AI | `shelflib/ai.py` | İstem kurma, yanıt ayrıştırma, yeniden deneme |
+| Sağlayıcılar | `shelflib/providers.py` | Dört sağlayıcı, OpenAI uyumlu istemci |
+| Anahtarlar | `shelflib/keys.py` | `keys.env` (0600), arama sırası |
+| Yardım | `shelflib/help.py` | 14 konuluk ayrıntılı yardım metinleri |
 | Arayüz | `shelflib/tui.py` | Textual uygulaması |
 | CLI | `shelflib/cli.py` | Argüman ayrıştırma, alt komutlar |
+
+Yardımcı betikler `tools/` altında: `katalog.py` bu README'nin arşiv
+kataloğunu üretir, `kucult.py` PDF'leri Ghostscript ile güvenli şekilde
+küçültür (yalnızca gerçekten kazanç varsa).
 
 Mimari notları: [docs/mimari.md](docs/mimari.md).
 
 ## Kategori kuralları
 
-Kategori şeması ve anahtar kelimeler `shelflib/rules.json` içinde durur: 29
-kategori, 243 puanlı anahtar kelime. Kendi arşivinize uyarlamak için bu dosyayı
+Kategori şeması ve anahtar kelimeler `shelflib/rules.json` içinde durur: 35
+kategori, 1459 puanlı anahtar kelime girdisi (1435 benzersiz; bazı terimler
+birden fazla kategoride farklı ağırlıkla geçer). Kendi arşivinize uyarlamak için bu dosyayı
 düzenleyin veya `--rules kendi_kurallarim.json` ile başkasını verin.
 
-Puanlama, dosya adındaki eşleşmeleri içerikteki eşleşmelerden daha güçlü sayar ve
-bir terimin metinde kaç kez geçtiğini kademeli bir çarpana çevirir. Kural puanı
-eşiğin (varsayılan 15) altında kalırsa karar AI'a devredilir.
+Puanlama, dosya adındaki eşleşmeleri içerikteki eşleşmelerden daha güçlü sayar
+(×3) ve bir terimin metinde kaç kez geçtiğini kademeli bir çarpana çevirir
+(10+ kez ×3, 3+ kez ×2). Kural puanı eşiğin (varsayılan 15) altında kalırsa
+karar AI'a devredilir; AI'a tüm metin değil, dökümanın **içindekiler** bölümü
+gönderilir.
+
+1180 dökümanlık referans arşivde kural tek başına **%94.6** isabet sağlıyor,
+yani AI'a yalnızca ~64 döküman düşüyor. Matematiğin tamamı için
+`shelf help puanlama`.
 
 Ayrıntılar: [docs/kurallar.md](docs/kurallar.md).
 
@@ -171,33 +239,64 @@ Ayrıntılar: [docs/kurallar.md](docs/kurallar.md).
 |---|---|---|
 | `archive_dir` | otomatik tespit | Arşivin kök dizini |
 | `index_path` | `~/.local/share/shelf/index.db` | İndeks veritabanı |
-| `ai_model` | `gemini-flash-latest` | Kullanılacak model |
-| `limit` | `200` | Maksimum sonuç sayısı |
-| `ai_max_candidates` | `20` | AI'a gönderilecek en fazla aday |
+| `ai_model` | `gemini-flash-lite-latest` | `saglayici:model` biçiminde etkin model |
+| `limit` | `200` | Maksimum sonuç sayısı (`0` = sınırsız) |
+| `ai_max_candidates` | `20` | AI'ın inceleyeceği sonuç sayısı (`0` = hepsi) |
 | `organize_threshold` | `15` | Bu puanın altında karar AI'a geçer |
 | `index_max_pages` | `40` | Bir PDF'ten okunacak en fazla sayfa |
 | `index_max_chars` | `60000` | Bir dökümandan indekslenecek en fazla karakter |
 | `extensions` | `.pdf .md .txt .epub` | İndekslenecek dosya türleri |
 
-`shelf config --show` mevcut değerleri gösterir.
+`shelf config --show` mevcut değerleri gösterir; `*` işareti varsayılandan
+farklı olanları işaretler. Sayı bekleyen alanlar `hepsi` değerini de kabul eder:
+
+```bash
+shelf config --limit hepsi      # arama sonucu sınırını kaldır
+shelf config --ai-limit 50      # AI 50 sonuç incelesin
+```
+
+API anahtarları burada **değil**, `~/.config/shelf/keys.env` içinde tutulur —
+bu yüzden `~/.shelfrc` paylaşılabilir.
 
 ## Gereksinimler
 
 - Python 3.9+
-- PDF metin çıkarma için PyMuPDF
-- AI özellikleri için bir Google AI Studio API anahtarı (isteğe bağlı)
+- **PyMuPDF** — PDF metin çıkarma
+- **Textual + Rich** — tam ekran arayüz
+- AI için bir sağlayıcı anahtarı (isteğe bağlı; hepsinin ücretsiz katmanı var)
 
-Taranmış (resim tabanlı) PDF'lerden metin çıkarılamaz; bu dosyalar indekste yer
-alır ama yalnızca dosya adıyla bulunur. `shelf index` kaç dosyada bu durumun
-oluştuğunu bildirir.
+AI istemcisi standart kütüphanenin `urllib`'i ile yazıldı; ek bir HTTP
+bağımlılığı ya da sağlayıcıya özel SDK yoktur.
+
+## Performans
+
+1180 döküman, 9.2 GB'lık bir arşivde ölçüldü:
+
+| İşlem | Süre |
+|---|---|
+| İlk indeksleme | ~85 sn |
+| Artımlı indeksleme | < 1 sn |
+| Ad araması | ~0.21 sn |
+| İçerik araması (indeksli) | ~0.15 sn |
+| Kopya taraması | ~0.15 sn |
+
+Kopya taramasının hızı, 9 GB'ın tamamını hash'lemek yerine önce dosyaları
+boyuta göre gruplayıp yalnızca aynı boyuttaki adayları okumasından gelir.
 
 ## Bilinen sınırlar
 
-- AI sağlayıcısı şimdilik yalnızca Google Gemini.
-- Ücretsiz API kotası dar; çok sayıda dökümanı AI ile işlerken kota sınırına
-  takılabilirsiniz. Araç bu durumda geri çekilerek yeniden dener ve sonunda
-  anlaşılır bir mesaj verir, işlem kural puanlarıyla devam eder.
-- Kategori kuralları Türkçe/İngilizce karışık bir siber güvenlik arşivi için
+- **Taranmış PDF'ler.** Resim tabanlı PDF'lerde metin katmanı yoktur; bu
+  dosyalar indekste yer alır ama yalnızca dosya adıyla bulunur, AI ile de
+  puanlanamaz. `shelf index` kaç dosyada bu durumun oluştuğunu bildirir.
+  Çözüm OCR'dir, `shelf` bunu yapmaz.
+- **Ücretsiz API kotaları dar.** Çok sayıda dökümanı AI ile işlerken kotaya
+  takılabilirsiniz. Araç geri çekilerek yeniden dener, sonunda anlaşılır bir
+  mesaj verir ve işlem kural puanlarıyla kesintisiz devam eder. Sağlayıcı
+  değiştirmek tek komuttur: `shelf config --model <saglayici>:<model>`.
+- **Sağlayıcılar model emekliye ayırıyor.** Araç bağlantı denemesinde canlı
+  model listesinden seçim yaptığı için gömülü varsayılan eskise bile kırılmaz,
+  ama kayıtlı `ai_model` geçersiz kalabilir. `shelf models` güncel listeyi verir.
+- **Kategori kuralları** Türkçe/İngilizce karışık bir siber güvenlik arşivi için
   yazıldı; başka bir alan için `rules.json` baştan yazılmalıdır.
 
 <!-- KATALOG:BASLANGIC -->
