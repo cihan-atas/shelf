@@ -83,7 +83,8 @@ def search_index(cfg, query, content=False, category=None, subcategory=None,
                 + (" WHERE " + " AND ".join(where) if where else "")
                 + " ORDER BY f.relpath LIMIT ?"
             )
-        params.append(limit)
+        # limit 0 = sınırsız; SQLite'ta bunun karşılığı LIMIT -1
+        params.append(limit if limit else -1)
         rows = con.execute(sql, params).fetchall()
     except Exception:
         return []
@@ -137,7 +138,7 @@ def search_live(cfg, query, content=False, category=None, subcategory=None, limi
                 category=cat, subcategory=sub, size=size,
                 snippet=snippet, matched_content=content_match,
             ))
-            if len(results) >= limit:
+            if limit and len(results) >= limit:
                 break
     return results
 

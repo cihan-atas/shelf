@@ -97,7 +97,8 @@ def build_parser(with_subcommands=True):
     parser.add_argument("-c", "--content", action="store_true",
                         help="Dosya içeriklerinde de arar.")
     parser.add_argument("-k", "--category", help="Aramayı bir üst kategoriyle sınırlar.")
-    parser.add_argument("-n", "--limit", type=int, help="Maksimum sonuç sayısı.")
+    parser.add_argument("-n", "--limit", metavar="N",
+                        help="Maksimum sonuç sayısı. 'hepsi' ya da 0 sınırsız.")
     parser.add_argument("--ai", action="store_true",
                         help="Sonuçları yapay zeka ile alaka puanına göre sıralar.")
     parser.add_argument("--ai-limit", dest="ai_limit", metavar="N",
@@ -124,7 +125,8 @@ def build_parser(with_subcommands=True):
     p_cfg.add_argument("--archive", help="Varsayılan arşiv dizinini ayarlar.")
     p_cfg.add_argument("--model", help="Varsayılan AI modelini ayarlar.")
     p_cfg.add_argument("--index-path", help="İndeks veritabanının yolunu ayarlar.")
-    p_cfg.add_argument("--limit", type=int, help="Varsayılan sonuç limitini ayarlar.")
+    p_cfg.add_argument("--limit", metavar="N",
+                       help="Varsayılan sonuç limiti ('hepsi' = sınırsız).")
     p_cfg.add_argument("--ai-limit", dest="ai_limit", metavar="N",
                        help="AI'ın inceleyeceği sonuç sayısı ('hepsi' = sınırsız).")
     p_cfg.add_argument("--show", action="store_true", help="Mevcut ayarları gösterir.")
@@ -217,8 +219,8 @@ def load_rules(args):
         return None
 
 
-def _ai_limit_coz(deger):
-    """--ai-limit değerini sayıya çevirir. 'hepsi'/'all'/0 -> sınırsız."""
+def _ai_limit_coz(deger, bayrak="--ai-limit"):
+    """Limit değerini sayıya çevirir. 'hepsi'/'all'/0 -> sınırsız (0)."""
     if deger is None:
         return None
     metin = str(deger).strip().lower()
@@ -227,9 +229,9 @@ def _ai_limit_coz(deger):
     try:
         n = int(metin)
     except ValueError:
-        raise ValueError(f"--ai-limit sayı olmalı ya da 'hepsi': {deger}")
+        raise ValueError(f"{bayrak} sayı olmalı ya da 'hepsi': {deger}")
     if n < 0:
-        raise ValueError("--ai-limit negatif olamaz.")
+        raise ValueError(f"{bayrak} negatif olamaz.")
     return n
 
 
@@ -239,8 +241,12 @@ def resolve_cfg(args):
         cfg["archive_dir"] = os.path.expanduser(args.archive_dir)
     if getattr(args, "model", None):
         cfg["ai_model"] = args.model
-    if getattr(args, "limit", None):
-        cfg["limit"] = args.limit
+    if getattr(args, "limit", None) is not None:
+        try:
+            cfg["limit"] = _ai_limit_coz(args.limit, "--limit")
+        except ValueError as e:
+            _err(str(e))
+            raise SystemExit(1)
     if getattr(args, "ai_limit", None) is not None:
         try:
             cfg["ai_max_candidates"] = _ai_limit_coz(args.ai_limit)
@@ -327,8 +333,12 @@ def cmd_config(args):
     if args.index_path:
         cfg["index_path"] = os.path.expanduser(args.index_path)
         changed = True
-    if args.limit:
-        cfg["limit"] = args.limit
+    if args.limit is not None:
+        try:
+            cfg["limit"] = _ai_limit_coz(args.limit, "--limit")
+        except ValueError as e:
+            _err(str(e))
+            return 1
         changed = True
     if getattr(args, "ai_limit", None) is not None:
         try:
@@ -349,7 +359,7 @@ def cmd_config(args):
                     "ai_max_candidates", "organize_threshold",
                     "index_max_pages", "index_max_chars"):
             val = cfg.get(key)
-            if key == "ai_max_candidates" and not val:
+            if key in ("ai_max_candidates", "limit") and not val:
                 val = "hepsi (sınırsız)"
             marker = "" if val == config_mod.DEFAULTS.get(key) else _c(" *", "yellow")
             print(f"  {key:<18}: {val}{marker}")
