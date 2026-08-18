@@ -36,7 +36,7 @@ HELP_TEXT = """\
 
 [b]Komutlar[/]
   Ctrl+A           Sonuçları yapay zeka ile alaka puanına göre sırala
-  F3               AI sağlayıcı, anahtar ve model ayarları
+  F3               AI sağlayıcı, anahtar, model ve tarama sınırı
   F4               Arşivi düzenle (kategorilendirme, kuru çalıştırma)
   F2               İçerik araması aç/kapat (dosya adı ↔ dosya içeriği)
   F5               Arşivi yeniden indeksle (değişenleri günceller)
@@ -70,17 +70,61 @@ class SearchInput(Input):
 
 
 class HelpScreen(ModalScreen):
-    BINDINGS = [Binding("escape,q,question_mark,f1", "dismiss_help", "Kapat")]
+    """Gezilebilir yardım: solda konu listesi, sağda kaydırılabilir metin.
+
+    Eski sürüm herhangi bir tuşta kapanıyordu; bu yüzden uzun metinleri
+    kaydırmak mümkün değildi. Artık yalnızca Esc/F1/q kapatır.
+    """
+
+    BINDINGS = [
+        Binding("escape,f1,q", "kapat", "Kapat"),
+        Binding("tab", "odak_degistir", "Panel değiştir", show=False),
+    ]
 
     def compose(self) -> ComposeResult:
-        yield Static(HELP_TEXT, id="help-box")
+        with Vertical(id="help-box"):
+            yield Static("[b cyan]shelf — Yardım[/]  "
+                         "[dim]↑↓ konu seç · PgUp/PgDn kaydır · Esc kapat[/]",
+                         id="help-title")
+            with Horizontal(id="help-cols"):
+                yield OptionList(id="help-topics")
+                with VerticalScroll(id="help-body-pane"):
+                    yield Static("", id="help-body", markup=False)
 
-    def on_key(self, event) -> None:
-        event.stop()
+    def on_mount(self) -> None:
+        from . import help as help_mod
+
+        olist = self.query_one("#help-topics", OptionList)
+        olist.add_option(Option(Text("Kısayollar", style="bold"), id="_tus"))
+        for ad, veri in help_mod.KONULAR.items():
+            olist.add_option(Option(Text(veri["baslik"]), id=ad))
+        olist.highlighted = 0
+        olist.focus()
+        self._goster("_tus")
+
+    def _goster(self, ad) -> None:
+        from . import help as help_mod
+
+        if ad == "_tus":
+            metin = HELP_TEXT
+        else:
+            metin = help_mod.konu_metni(ad) or ""
+        self.query_one("#help-body", Static).update(metin)
+        self.query_one("#help-body-pane", VerticalScroll).scroll_home(animate=False)
+
+    def on_option_list_option_highlighted(self, event) -> None:
+        secim = event.option_list.get_option_at_index(event.option_index).id
+        if secim:
+            self._goster(secim)
+
+    def action_odak_degistir(self) -> None:
+        olist = self.query_one("#help-topics", OptionList)
+        pane = self.query_one("#help-body-pane", VerticalScroll)
+        (pane if olist.has_focus else olist).focus()
+
+    def action_kapat(self) -> None:
         self.dismiss()
 
-    def action_dismiss_help(self) -> None:
-        self.dismiss()
 
 class KeyPrompt(ModalScreen):
     """Tek bir sağlayıcı için API anahtarı girişi."""
@@ -610,10 +654,14 @@ class ShelfApp(App):
     #org-hint { height: 1; color: $text-muted; }
 
     #help-box {
-        width: 78; height: auto; padding: 1 2;
-        border: thick $accent; background: $surface;
-        margin: 2 4;
+        width: 108; height: 90%; padding: 1 2;
+        border: thick $accent; background: $surface; margin: 1 4;
     }
+    #help-title { height: 1; }
+    #help-cols { height: 1fr; padding: 1 0 0 0; }
+    #help-topics { width: 26; border-right: solid $panel-lighten-2; }
+    #help-body-pane { width: 1fr; padding: 0 1; }
+    #help-body { height: auto; }
     """
 
     # Not: ctrl+q ve ctrl+t birçok terminal emülatöründe pencere/sekme kısayolu

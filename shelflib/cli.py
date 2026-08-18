@@ -16,37 +16,55 @@ from . import search as search_mod
 from .rules import Rules, RulesError
 
 EPILOG = """\
-ÖRNEK KULLANIMLAR:
-------------------
-  shelf                              İnteraktif arayüzü açar (varsayılan arşivde)
-  shelf kerberos                     İnteraktif arayüzü bu sorguyla açar
-  shelf -q kerberos                  Tek seferlik arama, sonucu basar ve çıkar
-  shelf -q "CVE-2021-44228" -c       İçerikte arar (indeks varsa anında)
-  shelf -q kerberos --ai             Sonuçları yapay zeka ile sıralar
-  shelf -q ldap --json               Çıktıyı JSON olarak verir (pipe/script için)
+ÖRNEK KULLANIMLAR
+─────────────────
+  ARAMA
+    shelf                              İnteraktif arayüzü açar
+    shelf kerberos                     Arayüzü bu sorguyla açar
+    shelf -q kerberos                  Tek seferlik arama, basar ve çıkar
+    shelf -q "golden ticket" -c        İçerikte arar (indeks varsa anında)
+    shelf -q kerberos -c --ai          Sonuçları yapay zeka ile sıralar
+    shelf -q ldap -n hepsi             Tüm sonuçları göster (varsayılan 200)
+    shelf -q ldap -k 01_OFANSIF_GUVENLIK_(RED_TEAM)   Kategoriyle sınırla
+    shelf -q ldap --json | jq -r '.[].path'           Betikte kullan
 
-  shelf index                        Arşivi indeksler (ilk kurulumda bir kez)
-  shelf index --rebuild              İndeksi sıfırdan kurar
-  shelf index --info                 İndeks durumunu gösterir
-  shelf config --archive ~/arsiv     Varsayılan arşiv dizinini ayarlar
-  shelf config --show                Mevcut ayarları gösterir
+  KURULUM VE İNDEKS
+    shelf config --archive ~/arsiv     Arşiv dizinini tanıt (bir kez)
+    shelf index                        İndeksi kur/güncelle
+    shelf index --rebuild              Sıfırdan kur
+    shelf index --info                 Durumu göster
+    shelf config --show                Tüm ayarları göster
 
-ARŞİV BAKIMI:
--------------
-  shelf organize ~/Indirilenler      Yeni dökümanları kategorilere yerleştirir
-  shelf organize ~/Indirilenler -n   Önce ne yapacağını gösterir (kuru çalıştırma)
-  shelf duplicates                   Kopya dosyaları bulur
-  shelf keywords                     Kategorisiz dosyalardan yeni kural önerir
-  shelf rules                        Kategori şemasını listeler
+  YAPAY ZEKA
+    shelf keys                         Anahtar durumu ve kayıt linkleri
+    shelf keys --set groq              Anahtar ekle (gizli giriş + deneme)
+    shelf keys --test                  Kayıtlı anahtarları gerçek istekle dene
+    shelf models                       Kullanılabilir modelleri listele
+    shelf models -p openrouter --free  Yalnızca ücretsiz modeller
+    shelf config --model groq:openai/gpt-oss-20b
+    shelf config --ai-limit 50         AI kaç sonucu incelesin
 
-YAPAY ZEKA:
------------
-  shelf keys                         Anahtar durumunu gösterir
-  shelf keys --set groq              Groq anahtarını kaydeder
-  shelf keys --test                  Kayıtlı anahtarları gerçek istekle dener
-  shelf models                       Kullanılabilir modelleri listeler
-  shelf models -p openrouter --free  Yalnızca ücretsiz modelleri gösterir
-  shelf config --model groq:llama-3.3-70b-versatile
+  ARŞİV BAKIMI
+    shelf organize ~/Indirilenler -n   ÖNCE kuru çalıştırma (dokunmaz)
+    shelf organize ~/Indirilenler      Belgeleri kategorilere kopyala
+    shelf organize ~/dizin --move      Kopyalamak yerine taşı
+    shelf organize ~/dizin --rename    Adları da AI ile yenile
+    shelf duplicates                   Kopya dosyaları bul
+    shelf duplicates --prune           Kopyaları sil (onay ister)
+    shelf keywords                     Yeni anahtar kelime adayları öner
+    shelf rules -k                     Kategori şeması ve kelimeler
+
+AYRINTILI YARDIM
+────────────────
+  shelf help                           Konu listesi
+  shelf help baslangic                 Sıfırdan kurulum, adım adım
+  shelf help arama                     Arama kipleri ve operatörler
+  shelf help ai                        Sağlayıcılar, anahtarlar, modeller
+  shelf help duzenle                   Kategorilendirme nasıl karar verir
+  shelf help bakim                     İndeks, kopyalar, kelime analizi
+  shelf help kisayollar                TUI tuşları
+  shelf help ayarlar                   ~/.shelfrc anahtarlarının tamamı
+  shelf help sorun                     Sık karşılaşılan hatalar
 """
 
 
@@ -71,7 +89,7 @@ def _err(msg):
 
 
 COMMANDS = ("index", "config", "organize", "duplicates", "keywords", "rules",
-            "keys", "models")
+            "keys", "models", "help")
 
 
 def build_parser(with_subcommands=True):
@@ -186,6 +204,11 @@ def build_parser(with_subcommands=True):
     p_rules.add_argument("--rules", help="Kullanılacak kural dosyası (JSON).")
     p_rules.add_argument("-k", "--keywords", action="store_true",
                          help="Her kategorinin anahtar kelimelerini de listeler.")
+
+    p_help = sub.add_parser(
+        "help", help="Konu bazlı ayrıntılı yardım.",
+        description="Argümansız çalıştırıldığında konuları listeler.")
+    p_help.add_argument("konu", nargs="?", help="Açılacak konu adı.")
 
     p_keys = sub.add_parser(
         "keys", help="API anahtarlarını yönetir.",
@@ -771,10 +794,29 @@ def main(argv=None):
         return cmd_keywords(args)
     if args.command == "rules":
         return cmd_rules(args)
+    if args.command == "help":
+        return cmd_help(args)
     if args.command == "keys":
         return cmd_keys(args)
     if args.command == "models":
         return cmd_models(args)
+    return 0
+
+
+def cmd_help(args):
+    """Konu listesini ya da tek bir konunun ayrıntılı metnini basar."""
+    from . import help as help_mod
+
+    if not args.konu:
+        print(help_mod.konu_listesi())
+        return 0
+    metin = help_mod.konu_metni(args.konu.lower())
+    if metin is None:
+        _err(f"Bilinmeyen konu: {args.konu}")
+        print(file=sys.stderr)
+        print(help_mod.konu_listesi(), file=sys.stderr)
+        return 1
+    print(metin)
     return 0
 
 
