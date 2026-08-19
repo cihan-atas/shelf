@@ -322,6 +322,28 @@ boyuta göre gruplayıp yalnızca aynı boyuttaki adayları okumasından gelir.
 - **Kategori kuralları** Türkçe/İngilizce karışık bir siber güvenlik arşivi için
   yazıldı; başka bir alan için `rules.json` baştan yazılmalıdır.
 
+## İletişim
+
+Soru, hata bildirimi ve öneriler için:
+
+- **GitHub Issues** — hata ve özellik istekleri için tercih edilen yol:
+  [github.com/cihan-atas/shelf/issues](https://github.com/cihan-atas/shelf/issues)
+- **E-posta** — atascihan115@gmail.com
+
+Katkılar açıktır. Kod göndermeden önce bir issue açıp yaklaşımı konuşmak
+gereksiz iş çıkmasını önler.
+
+### Kendi arşivinizi kurmak
+
+`shelf` bir araçtır, döküman dağıtmaz. README'deki katalog, aracın 1180
+belgelik gerçek bir arşivde ne ürettiğini göstermek içindir; o belgeler bu
+depoda yer almaz.
+
+Kendi arşivinizi kurmak için dizinlerinizi `ust_kategori/alt_kategori/belge.pdf`
+düzeninde toplayın, `shelflib/rules.json` içindeki kategorileri ve anahtar
+kelimeleri kendi alanınıza uyarlayın, sonra `shelf index` ile indeksleyin.
+Ayrıntılar: `shelf help baslangic` ve [docs/kurallar.md](docs/kurallar.md).
+
 <!-- KATALOG:BASLANGIC -->
 
 ## Arşiv kataloğu
