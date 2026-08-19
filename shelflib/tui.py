@@ -41,7 +41,8 @@ HELP_TEXT = """\
   F4               Arşivi düzenle (kategorilendirme, kuru çalıştırma)
   F2               İçerik araması aç/kapat (dosya adı ↔ dosya içeriği)
   F5               Arşivi yeniden indeksle (değişenleri günceller)
-  F6               Seçili dökümanı favorilere ekle/çıkar
+  Boşluk           Favorilere ekle/çıkar (sonuç listesindeyken)
+  F6               Aynısı — arama kutusundayken de çalışır
   F7               Yalnızca favorileri göster (aç/kapa)
   Ctrl+O           Seçili dosyanın klasörünü aç
   Ctrl+Y           Seçili dosyanın tam yolunu panoya kopyala
@@ -69,6 +70,18 @@ class SearchInput(Input):
     BINDINGS = [
         Binding("ctrl+a", "app.ai_rank", "AI sırala", priority=True),
         Binding("ctrl+c", "app.quit", "Çıkış", priority=True),
+    ]
+
+
+class ResultList(OptionList):
+    """Sonuç listesi.
+
+    Boşluk tuşu burada favori ekler/çıkarır. Bağlantı yalnızca bu widget'a
+    tanımlıdır; odak arama kutusundayken boşluk normal karakter olarak yazılır.
+    """
+
+    BINDINGS = [
+        Binding("space", "app.fav_toggle", "Favori", show=False),
     ]
 
 
@@ -722,7 +735,7 @@ class ShelfApp(App):
         with Horizontal(id="body"):
             with Vertical(id="tree-pane"):
                 yield Tree("Arşiv", id="tree")
-            yield OptionList(id="results")
+            yield ResultList(id="results")
             with VerticalScroll(id="preview-pane"):
                 yield Static("", id="preview-title")
                 yield Static("", id="preview-meta")

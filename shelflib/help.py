@@ -247,7 +247,8 @@ _konu("kisayollar", "TUI kısayolları", "İnteraktif arayüzdeki tuşlar", """
   F3               AI: sağlayıcı, anahtar, model, tarama sınırı
   F4               Arşivi düzenle (kategorilendirme, kuru çalıştırma)
   F5               Arşivi yeniden indeksle
-  F6               Seçili dökümanı favorilere ekle/çıkar
+  Boşluk           Favorilere ekle/çıkar (sonuç listesindeyken)
+  F6               Aynısı — arama kutusundayken de çalışır
   F7               Yalnızca favorileri göster (aç/kapa)
 
   Ctrl+A           Sonuçları AI ile sırala
@@ -330,7 +331,8 @@ NE İŞE YARAR
   Favoriler onları işaretler ve aramayı yalnızca onlarla sınırlamanızı sağlar.
 
 ARAYÜZDE
-  F6    Seçili dökümanı favorilere ekler/çıkarır
+  Boşluk  Favorilere ekler/çıkarır — sonuç listesinde gezinirken
+  F6      Aynısı; odak arama kutusundayken de çalışır
   F7    Yalnızca favorileri gösterme kipini açar/kapatır
 
   Favori dökümanlar sonuç listesinde başında ★ ile görünür. F7 açıkken
