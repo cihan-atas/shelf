@@ -35,6 +35,9 @@ yerleştirir.
 - **Otomatik düzenleme** — yeni dökümanları ağırlıklı anahtar kelime puanlamasıyla
   kategorilere yerleştirir; puan zayıfsa kararı AI'a devreder, isteğe bağlı olarak
   dosya adlarını da yeniden yazar.
+- **Favoriler** — sık döndüğünüz dökümanları ★ ile işaretleyin, aramayı tek
+  tuşla yalnızca onlarla sınırlayın. Yollar arşiv köküne göreli saklandığı
+  için arşivi taşısanız da bozulmaz.
 - **Kopya bulma** — aynı içerikli dosyaları tespit eder. Önce boyuta göre eleyip
   yalnızca adayları okuduğu için gigabaytlarca arşivde bile saniyeler sürer.
 - **Kural önerisi** — hiçbir kategoriye oturmayan dosyalardan sık geçen terimleri
@@ -107,6 +110,8 @@ shelf config --model groq:openai/gpt-oss-20b   # birini seç
 | `F3` | AI ayarları: sağlayıcı, anahtar, model, tarama sınırı |
 | `F4` | Arşivi düzenle: kaynak/hedef, kuru çalıştırma, canlı ilerleme |
 | `F5` | Arşivi yeniden indeksler |
+| `F6` | Seçili dökümanı favorilere ekler/çıkarır |
+| `F7` | Yalnızca favorileri gösterir (aç/kapa) |
 | `Ctrl+A` | Sonuçları AI ile alaka puanına göre sıralar |
 | `Ctrl+O` | Seçili dosyanın klasörünü açar |
 | `Ctrl+Y` | Seçili dosyanın tam yolunu panoya kopyalar |
@@ -159,6 +164,23 @@ siler, interaktif onay ister ve terminal yoksa çalışmayı reddeder.
 kategorilendirmenin kotasını tüketebileceği için önce kategorilendirin,
 adlandırmayı ayrı bir koşuda yapın.
 
+### Favoriler
+
+```bash
+shelf fav                          # favorileri listeler
+shelf fav ~/arsiv/kitap.pdf        # ekler (zaten favoriyse çıkarır)
+shelf fav ~/arsiv/kitap.pdf -r     # yalnızca çıkarır
+shelf fav --paths                  # yalnızca yolları basar (betikler için)
+shelf fav --prune                  # diskte olmayan favorileri temizler
+
+shelf -q kerberos -f               # aramayı favorilerle sınırlar
+shelf -q sqli -c --fav             # içerik araması, yalnızca favoriler
+```
+
+Arayüzde `F6` ekler/çıkarır, `F7` yalnızca favorileri gösterme kipini açar.
+Favoriler `~/.local/share/shelf/favorites.json` içinde, arşiv köküne **göreli**
+yolla tutulur — arşiv dizinini taşısanız da kayıtlar bozulmaz.
+
 ### Yapay zeka yönetimi
 
 ```bash
@@ -202,7 +224,8 @@ Ayrıntılar için [docs/kullanim.md](docs/kullanim.md).
 | AI | `shelflib/ai.py` | İstem kurma, yanıt ayrıştırma, yeniden deneme |
 | Sağlayıcılar | `shelflib/providers.py` | Dört sağlayıcı, OpenAI uyumlu istemci |
 | Anahtarlar | `shelflib/keys.py` | `keys.env` (0600), arama sırası |
-| Yardım | `shelflib/help.py` | 14 konuluk ayrıntılı yardım metinleri |
+| Favoriler | `shelflib/favorites.py` | Göreli yol saklama, atomik yazma |
+| Yardım | `shelflib/help.py` | 15 konuluk ayrıntılı yardım metinleri |
 | Arayüz | `shelflib/tui.py` | Textual uygulaması |
 | CLI | `shelflib/cli.py` | Argüman ayrıştırma, alt komutlar |
 

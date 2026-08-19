@@ -9,6 +9,7 @@ import time
 from . import __version__
 from . import ai as ai_mod
 from . import config as config_mod
+from . import favorites as fav_mod
 from . import index as idx
 from . import keys as keys_mod
 from . import providers
@@ -89,7 +90,7 @@ def _err(msg):
 
 
 COMMANDS = ("index", "config", "organize", "duplicates", "keywords", "rules",
-            "keys", "models", "help")
+            "keys", "models", "help", "fav")
 
 
 def build_parser(with_subcommands=True):
@@ -119,6 +120,8 @@ def build_parser(with_subcommands=True):
                         help="Maksimum sonuç sayısı. 'hepsi' ya da 0 sınırsız.")
     parser.add_argument("--ai", action="store_true",
                         help="Sonuçları yapay zeka ile alaka puanına göre sıralar.")
+    parser.add_argument("-f", "--fav", action="store_true",
+                        help="Aramayı yalnızca favorilerle sınırlar.")
     parser.add_argument("--ai-limit", dest="ai_limit", metavar="N",
                         help="AI'ın inceleyeceği sonuç sayısı. 'hepsi' ya da 0 "
                              "tüm sonuçları tarar. (Ayarlardan: ai_max_candidates)")
@@ -204,6 +207,22 @@ def build_parser(with_subcommands=True):
     p_rules.add_argument("--rules", help="Kullanılacak kural dosyası (JSON).")
     p_rules.add_argument("-k", "--keywords", action="store_true",
                          help="Her kategorinin anahtar kelimelerini de listeler.")
+
+    p_fav = sub.add_parser(
+        "fav", help="Favori dökümanları yönetir.",
+        description=f"Favoriler {fav_mod.FAV_PATH} içinde arşiv köküne göreli "
+                    "yolla saklanır; arşiv taşınsa da bozulmaz.")
+    p_fav.add_argument("yol", nargs="*",
+                       help="Eklenecek/çıkarılacak dosya(lar). Boşsa listeler.")
+    p_fav.add_argument("-a", "--add", action="store_true", help="Favoriye ekler.")
+    p_fav.add_argument("-r", "--remove", action="store_true",
+                       help="Favoriden çıkarır.")
+    p_fav.add_argument("--prune", action="store_true",
+                       help="Diskte olmayan favorileri temizler.")
+    p_fav.add_argument("--clear", action="store_true",
+                       help="Tüm favorileri siler (onay ister).")
+    p_fav.add_argument("--paths", action="store_true",
+                       help="Yalnızca yolları basar (betikler için).")
 
     p_help = sub.add_parser(
         "help", help="Konu bazlı ayrıntılı yardım.",
@@ -713,6 +732,16 @@ def cmd_oneshot(args, cfg, query):
     results, backend = search_mod.search(
         cfg, query, content=args.content, category=args.category, limit=cfg["limit"])
 
+    if getattr(args, "fav", False):
+        favs = fav_mod.anahtar_kumesi()
+        arsiv = cfg["archive_dir"]
+        results = [r for r in results
+                   if fav_mod._bagil(r.path, arsiv) in favs]
+        backend += "+favori"
+        if not results:
+            print("Favoriler arasında bu sorguya uyan döküman yok.")
+            return 1
+
     if args.ai and results:
         try:
             provider = ai_mod.get_provider(cfg["ai_model"])
@@ -794,12 +823,96 @@ def main(argv=None):
         return cmd_keywords(args)
     if args.command == "rules":
         return cmd_rules(args)
+    if args.command == "fav":
+        return cmd_fav(args)
     if args.command == "help":
         return cmd_help(args)
     if args.command == "keys":
         return cmd_keys(args)
     if args.command == "models":
         return cmd_models(args)
+    return 0
+
+
+def cmd_fav(args):
+    """Favorileri listeler, ekler, çıkarır veya temizler."""
+    cfg = config_mod.load()
+    arsiv = cfg.get("archive_dir") or ""
+
+    if args.clear:
+        n = len(fav_mod.yukle())
+        if not n:
+            print("Favori listesi zaten boş.")
+            return 0
+        if sys.stdin.isatty():
+            onay = input(f"{n} favori silinecek. Emin misiniz? (evet/hayır): ")
+            if onay.strip().lower() not in ("evet", "e", "yes", "y"):
+                print("İptal edildi.")
+                return 1
+        print(_c(f"{fav_mod.temizle()} favori silindi.", "yellow"))
+        return 0
+
+    if args.prune:
+        n = fav_mod.budala(arsiv)
+        print(_c(f"{n} kayıp favori temizlendi.", "yellow" if n else "grey"))
+        return 0
+
+    if args.yol:
+        cikar = args.remove and not args.add
+        degisen = 0
+        for ham in args.yol:
+            yol = os.path.abspath(os.path.expanduser(ham))
+            if not os.path.exists(yol):
+                _err(f"Dosya bulunamadı: {ham}")
+                _yol_ipucu(ham)
+                continue
+            if cikar:
+                ok = fav_mod.cikar(yol, arsiv)
+                durum = "çıkarıldı" if ok else "zaten favori değil"
+            elif args.add:
+                ok = fav_mod.ekle(yol, arsiv)
+                durum = "eklendi" if ok else "zaten favoride"
+            else:
+                ok = fav_mod.degistir(yol, arsiv)
+                durum = "eklendi" if ok else "çıkarıldı"
+            degisen += 1 if ok else 0
+            isaret = _c("★", "yellow") if (ok and not cikar) else _c("☆", "grey")
+            print(f"  {isaret} {os.path.basename(yol)[:60]}  {_c(durum, 'grey')}")
+        return 0 if degisen else 1
+
+    # argümansız: listele
+    satirlar = fav_mod.liste(arsiv)
+    if not satirlar:
+        print("Henüz favori yok.")
+        print(_c("  Eklemek için: shelf fav <dosya>   ya da arayüzde F6", "grey"))
+        return 1
+
+    if args.paths:
+        for mutlak, _bagil, _t, var in satirlar:
+            if var:
+                print(mutlak)
+        return 0
+
+    print(f"{_c('Favoriler:', 'cyan', True)} {len(satirlar)}"
+          f"  {_c(fav_mod.FAV_PATH, 'grey')}\n")
+    kayip = 0
+    for i, (mutlak, bagil, eklenme, var) in enumerate(satirlar, 1):
+        if var:
+            isaret = _c("★", "yellow")
+            ad = os.path.basename(mutlak)
+        else:
+            isaret = _c("✗", "red")
+            ad = os.path.basename(mutlak)
+            kayip += 1
+        print(f"  {isaret} [{i}] {ad[:70]}")
+        klasor = os.path.dirname(bagil)
+        detay = klasor or "(arşiv kökü)"
+        if not var:
+            detay += "  — dosya bulunamadı"
+        print(f"        {_c(detay, 'grey')}")
+    if kayip:
+        print(_c(f"\n{kayip} favorinin dosyası yok. 'shelf fav --prune' ile temizleyin.",
+                 "yellow"))
     return 0
 
 

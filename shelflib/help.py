@@ -247,6 +247,8 @@ _konu("kisayollar", "TUI kısayolları", "İnteraktif arayüzdeki tuşlar", """
   F3               AI: sağlayıcı, anahtar, model, tarama sınırı
   F4               Arşivi düzenle (kategorilendirme, kuru çalıştırma)
   F5               Arşivi yeniden indeksle
+  F6               Seçili dökümanı favorilere ekle/çıkar
+  F7               Yalnızca favorileri göster (aç/kapa)
 
   Ctrl+A           Sonuçları AI ile sırala
   Ctrl+O           Belgenin klasörünü dosya yöneticisinde aç
@@ -321,6 +323,49 @@ PDF'ten metin çıkmıyor
     shelf -q sorgu
 """)
 
+
+_konu("favoriler", "Favoriler", "Sık kullandığınız dökümanları işaretleme", """
+NE İŞE YARAR
+  1180 dökümanlık bir arşivde sürekli döndüğünüz 20-30 belge vardır.
+  Favoriler onları işaretler ve aramayı yalnızca onlarla sınırlamanızı sağlar.
+
+ARAYÜZDE
+  F6    Seçili dökümanı favorilere ekler/çıkarır
+  F7    Yalnızca favorileri gösterme kipini açar/kapatır
+
+  Favori dökümanlar sonuç listesinde başında ★ ile görünür. F7 açıkken
+  durum çubuğunda "★ yalnızca favoriler" yazar ve arama bu küme
+  içinde yapılır — sorgu yazmaya devam edebilirsiniz.
+
+KOMUT SATIRINDA
+    shelf fav                      favorileri listeler
+    shelf fav DOSYA                ekler (zaten favoriyse çıkarır)
+    shelf fav DOSYA -a             yalnızca ekler
+    shelf fav DOSYA -r             yalnızca çıkarır
+    shelf fav --paths              yalnızca yolları basar (betikler için)
+    shelf fav --prune              diskte olmayan favorileri temizler
+    shelf fav --clear              hepsini siler (onay ister)
+
+    shelf -q kerberos -f           aramayı favorilerle sınırlar
+    shelf -q sqli -c --fav         içerik araması, yalnızca favoriler
+
+  Betiklerde kullanım:
+    shelf fav --paths | xargs -d '\n' -I{} cp {} ~/calisma/
+
+NEREDE SAKLANIR
+  ~/.local/share/shelf/favorites.json
+
+  Yollar arşiv köküne GÖRELİ saklanır. Bu bilinçli bir tercih: arşiv
+  dizinini taşısanız ya da yeniden adlandırsanız favoriler bozulmaz.
+  Arşiv dışındaki dosyalar mutlak yolla tutulur.
+
+  Dosya atomik yazılır (önce .tmp, sonra rename), yarım dosya oluşmaz.
+
+DOSYA SİLİNİRSE
+  Favori kaydı kalır ama listede ✗ ile ve "dosya bulunamadı" notuyla
+  görünür. 'shelf fav --prune' bunları temizler. Bu davranış bilinçli:
+  dosya geçici olarak taşınmış olabilir, kayıt kendiliğinden silinmez.
+""")
 
 _konu("indeks", "İndeks iç yapısı", "SQLite FTS5, tokenizer, sıralama", """
 NEREDE
@@ -640,7 +685,7 @@ _konu("performans", "Performans", "Ölçülmüş rakamlar ve darboğazlar", """
 
 GRUPLAR = [
     ("Başlarken", ["baslangic", "arama", "kisayollar"]),
-    ("Günlük kullanım", ["ai", "duzenle", "bakim"]),
+    ("Günlük kullanım", ["ai", "duzenle", "bakim", "favoriler"]),
     ("Referans", ["bayraklar", "ayarlar", "dosyalar"]),
     ("Derinlemesine", ["indeks", "puanlama", "performans", "guvenlik"]),
     ("Yardım", ["sorun"]),

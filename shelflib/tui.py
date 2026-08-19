@@ -20,6 +20,7 @@ from textual.widgets.option_list import Option
 
 from . import ai as ai_mod
 from . import config as config_mod
+from . import favorites as fav_mod
 from . import index as idx
 from . import keys as keys_mod
 from . import providers
@@ -40,6 +41,8 @@ HELP_TEXT = """\
   F4               Arşivi düzenle (kategorilendirme, kuru çalıştırma)
   F2               İçerik araması aç/kapat (dosya adı ↔ dosya içeriği)
   F5               Arşivi yeniden indeksle (değişenleri günceller)
+  F6               Seçili dökümanı favorilere ekle/çıkar
+  F7               Yalnızca favorileri göster (aç/kapa)
   Ctrl+O           Seçili dosyanın klasörünü aç
   Ctrl+Y           Seçili dosyanın tam yolunu panoya kopyala
   F1 / ?           Bu yardım ekranı
@@ -80,6 +83,8 @@ class HelpScreen(ModalScreen):
         Binding("escape,f1,q", "kapat", "Kapat"),
         Binding("tab", "odak_degistir", "Panel değiştir", show=False),
     ]
+
+    fav_only = False
 
     def compose(self) -> ComposeResult:
         with Vertical(id="help-box"):
@@ -682,6 +687,8 @@ class ShelfApp(App):
         Binding("f3", "ai_settings", "AI ayarları", priority=True),
         Binding("f4", "organize", "Düzenle", priority=True),
         Binding("f5", "reindex", "İndeksle", priority=True),
+        Binding("f6", "fav_toggle", "Favori", priority=True),
+        Binding("f7", "fav_filter", "Favoriler", priority=True),
         Binding("ctrl+o", "open_folder", "Klasör", priority=True),
         Binding("ctrl+y", "copy_path", "Yolu kopyala", priority=True),
         Binding("escape", "focus_search", "Ara", show=False),
@@ -766,10 +773,13 @@ class ShelfApp(App):
         bits = []
         bits.append(f"[b]{len(self.results)}[/] sonuç")
         bits.append("içerik: [b green]açık[/]" if self.content_mode else "içerik: [dim]kapalı[/]")
+        temel = self.backend.replace("+favori", "")
         source = {"index": "indeks", "index-or": "indeks",
-                  "live": "canlı tarama"}.get(self.backend, self.backend)
+                  "live": "canlı tarama"}.get(temel, temel)
         bits.append(f"kaynak: [b]{source}[/]")
-        if self.backend == "index-or":
+        if getattr(self, "fav_only", False):
+            bits.append("[b yellow]★ yalnızca favoriler[/]")
+        if temel == "index-or":
             bits.append("[b yellow]gevşek eşleşme (terimlerden herhangi biri)[/]")
         if self.category_filter:
             f = _pretty(self.category_filter)
@@ -814,6 +824,12 @@ class ShelfApp(App):
         except Exception as e:
             self.call_from_thread(self.notify, f"Arama hatası: {e}", severity="error")
             results, backend = [], self.backend
+        if getattr(self, "fav_only", False):
+            favs = fav_mod.anahtar_kumesi()
+            arsiv = self.cfg.get("archive_dir", "")
+            results = [r for r in results
+                       if fav_mod._bagil(r.path, arsiv) in favs]
+            backend += "+favori"
         self.call_from_thread(self._apply_results, results, backend)
 
     def _apply_results(self, results, backend) -> None:
@@ -837,7 +853,13 @@ class ShelfApp(App):
         terms = search_mod.tokenize(self.query_one("#search", Input).value)
         width = self._option_width()
         olist.clear_options()
-        olist.add_options([Option(_render_option(r, terms, width)) for r in self.results])
+        # Favori kümesi satır başına değil, çizim başına bir kez okunur
+        favs = fav_mod.anahtar_kumesi()
+        arsiv = self.cfg.get("archive_dir", "")
+        olist.add_options([
+            Option(_render_option(
+                r, terms, width, favori=fav_mod._bagil(r.path, arsiv) in favs))
+            for r in self.results])
         if self.results:
             olist.highlighted = min(position or 0, len(self.results) - 1)
             if not keep_position:
@@ -967,6 +989,26 @@ class ShelfApp(App):
         self.notify("İçerik araması " + ("açıldı" if self.content_mode else "kapatıldı"))
         self.run_search()
 
+    def action_fav_toggle(self) -> None:
+        """Seçili dökümanı favorilere ekler/çıkarır."""
+        r = self._current()
+        if r is None:
+            return
+        arsiv = self.cfg.get("archive_dir", "")
+        try:
+            simdi = fav_mod.degistir(r.path, arsiv)
+        except OSError as e:
+            self._set_busy(f"Favori kaydedilemedi: {e}")
+            return
+        self._repopulate()
+        durum = "favorilere eklendi" if simdi else "favorilerden çıkarıldı"
+        self._set_busy(f"{'★' if simdi else '☆'} {r.name[:44]} — {durum}")
+
+    def action_fav_filter(self) -> None:
+        """Yalnızca favorileri gösterme kipini açar/kapatır."""
+        self.fav_only = not getattr(self, "fav_only", False)
+        self.run_search()
+
     def action_ai_settings(self) -> None:
         """Sağlayıcı/anahtar/model ekranını açar."""
         self.push_screen(AIScreen(self.cfg), self._ai_ayar_kapandi)
@@ -1091,10 +1133,13 @@ def _trunc(text, width, marked=False):
     return "".join(out)
 
 
-def _render_option(r, terms, width=80):
+def _render_option(r, terms, width=80, favori=False):
     """Bir sonuç satırını üç satırlık Rich metnine dönüştürür."""
     out = Text()
 
+    if favori:
+        out.append("★ ", style="yellow")
+        width -= 2
     title = Text(_trunc(r.name, width))
     for t in terms:
         title.highlight_words([t], "bold red", case_sensitive=False)
