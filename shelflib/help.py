@@ -199,6 +199,23 @@ YENİDEN ADLANDIRMA
   kategorilendirmenin kotasını tüketebilir. Büyük arşivlerde önce
   kategorilendirin, adlandırmayı ayrı bir koşuda yapın.
 
+YALNIZCA ADLANDIRMA (zaten düzenli arşivde)
+
+    shelf organize ~/arsiv --rename-only -n     önce kuru çalıştırma
+    shelf organize ~/arsiv --rename-only
+
+  Dosyaları TAŞIMAZ, yalnızca adlarını değiştirir. Kategori dosyanın
+  bulunduğu klasörden okunur, yeniden puanlanmaz — yani adlandırma
+  kategorilendirmeyi bozamaz.
+
+  Adı zaten kategori önekiyle başlayanlar atlanır; hepsini işlemek için
+  --force-rename ekleyin. Metni çıkarılamayan (taranmış) dosyalar mevcut
+  adlarıyla kalır ve sonunda kaç tane olduğu bildirilir.
+
+  Bu kip, kategorilendirmesi bitmiş ama adlandırması yarım kalmış bir
+  arşivi tamamlamak için tasarlandı: 9 GB'ı yeniden kopyalamaya gerek
+  kalmaz, kota bütçesinin tamamı adlandırmaya gider.
+
 KURALLARI GÖRME VE DEĞİŞTİRME
 
     shelf rules                    kategori -> klasör eşlemesi

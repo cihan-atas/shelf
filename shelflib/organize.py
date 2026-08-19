@@ -393,3 +393,92 @@ def summarize(actions):
         entry["count"] += 1
         entry[a.decided_by] = entry.get(a.decided_by, 0) + 1
     return dict(sorted(by_category.items(), key=lambda kv: -kv[1]["count"]))
+
+
+# ---------- yerinde yeniden adlandırma ----------
+
+def _kategori_klasorden(rules, path, archive_dir):
+    """Dosyanın bulunduğu klasörden kategori kodunu çıkarır.
+
+    Yeniden adlandırma kipinde kategori YENİDEN HESAPLANMAZ; dosya zaten
+    doğru klasördeyse o karar korunur. Böylece adlandırma, kategorilendirmeyi
+    bozma riski taşımaz.
+    """
+    try:
+        bagil = os.path.relpath(path, archive_dir)
+    except ValueError:
+        return None
+    klasor = os.path.dirname(bagil).replace(os.sep, "/")
+    for kod, yol in rules.dir_structure.items():
+        if yol.replace(os.sep, "/") == klasor:
+            return kod
+    return None
+
+
+def _adlandirilmis_mi(name, rules):
+    """Dosya adı zaten bir kategori önekiyle başlıyor mu?"""
+    ust = name.upper()
+    return any(ust.startswith(kod + "_") for kod in rules.dir_structure)
+
+
+def rename_in_place(archive_dir, rules, provider, dry_run=True,
+                    skip_named=True, progress=None, max_pages=10,
+                    max_chars=8000):
+    """Arşivdeki dosyaları YERİNDE yeniden adlandırır.
+
+    Dosyalar klasörler arasında taşınmaz; yalnızca adları değişir. Kategori
+    dosyanın bulunduğu klasörden okunur, yeniden puanlanmaz.
+
+    (eylemler, hatalar) döner. Her eylem bir Action'dır; dest aynı klasörde
+    yeni addır.
+    """
+    eylemler, hatalar = [], []
+    dosyalar = list_source_files(archive_dir, recursive=True)
+    toplam = len(dosyalar)
+
+    for i, path in enumerate(dosyalar, 1):
+        ad = os.path.basename(path)
+        if progress:
+            progress(i, toplam, ad, "inceleniyor")
+
+        if skip_named and _adlandirilmis_mi(ad, rules):
+            continue
+
+        kategori = _kategori_klasorden(rules, path, archive_dir) or UNCATEGORIZED
+
+        if progress:
+            progress(i, toplam, ad, "içindekiler okunuyor")
+        ozet = icindekiler(path)
+        if not ozet and ad.lower().endswith(TEXT_EXTS):
+            ozet, _ = idx.extract_text(path, max_chars, max_pages)
+        if not ozet:
+            hatalar.append("Metin çıkarılamadı (taranmış PDF olabilir)")
+            continue
+
+        if progress:
+            progress(i, toplam, ad, "AI ad öneriyor")
+        yeni_ad = _ai_rename(provider, kategori, ad, ozet, hatalar)
+        if not yeni_ad or yeni_ad == ad:
+            continue
+
+        hedef = os.path.join(os.path.dirname(path), yeni_ad)
+        if os.path.exists(hedef):
+            kok, uzanti = os.path.splitext(yeni_ad)
+            yeni_ad = f"{kok}_{int(time.time())}{uzanti}"
+            hedef = os.path.join(os.path.dirname(path), yeni_ad)
+
+        eylemler.append(Action(
+            source=path, name=ad, category=kategori, score=0,
+            decided_by="ai-ad", dest=hedef, new_name=yeni_ad))
+
+    if not dry_run:
+        for a in eylemler:
+            try:
+                os.rename(a.source, a.dest)
+                a.status = "yeniden adlandırıldı"
+            except OSError as e:
+                a.status = "hata"
+                a.note = f"{type(e).__name__}: {e}"
+                hatalar.append(f"Yeniden adlandırılamadı: {e}")
+
+    return eylemler, hatalar

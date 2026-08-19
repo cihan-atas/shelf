@@ -165,6 +165,13 @@ def build_parser(with_subcommands=True):
                        help="Dosyaları kopyalamak yerine taşır.")
     p_org.add_argument("-r", "--recursive", action="store_true",
                        help="Kaynak dizinin alt klasörlerini de tarar.")
+    p_org.add_argument("--rename-only", action="store_true", dest="rename_only",
+                       help="Dosyaları TAŞIMAZ, yalnızca yerinde yeniden "
+                            "adlandırır. Kategori bulunduğu klasörden okunur. "
+                            "Adı zaten kategori önekiyle başlayanlar atlanır.")
+    p_org.add_argument("--force-rename", action="store_true", dest="force_rename",
+                       help="--rename-only ile: zaten adlandırılmış olanları da "
+                            "yeniden adlandırır.")
     p_org.add_argument("--ai-only", action="store_true", dest="ai_only",
                        help="Kural puanlamasını yok sayar, her dosyayı AI'a sorar. "
                             "(Kategori listesi yine kurallardan gelir.)")
@@ -439,6 +446,8 @@ def cmd_organize(args):
     if getattr(args, "ai_only", False) and args.no_ai:
         _err("--ai-only ile --no-ai birlikte kullanılamaz.")
         return 1
+    if getattr(args, "rename_only", False):
+        return _cmd_rename_only(args)
 
     cfg = resolve_cfg(args)
     source = os.path.expanduser(args.source_dir)
@@ -548,6 +557,76 @@ def cmd_organize(args):
 
 
 # ---------- duplicates ----------
+
+def _cmd_rename_only(args):
+    """Arşivi yerinde yeniden adlandırır; dosyaları klasörler arası taşımaz."""
+    from . import ai as ai_mod
+    from . import organize as org
+
+    rules = load_rules(args)
+    if rules is None:
+        return 1
+    if args.no_ai:
+        _err("--rename-only AI gerektirir; --no-ai ile kullanılamaz.")
+        return 1
+
+    cfg = resolve_cfg(args)
+    arsiv = os.path.expanduser(args.source_dir)
+    if not os.path.isdir(arsiv):
+        _err(f"Arşiv dizini bulunamadı: {arsiv}")
+        _yol_ipucu(arsiv)
+        return 1
+
+    try:
+        provider = ai_mod.get_provider(cfg["ai_model"])
+    except ai_mod.AIError as e:
+        _err(str(e))
+        return 1
+
+    print(f"{_c('Arşiv:', 'blue', True)} {arsiv}")
+    print(f"{_c('AI   :', 'blue', True)} {provider.label}")
+    print(f"{_c('İşlem:', 'blue', True)} Dosyalar YERİNDE yeniden adlandırılacak, "
+          f"klasör değiştirilmeyecek.")
+    if args.dry_run:
+        print(_c("\n--- KURU ÇALIŞTIRMA: hiçbir dosya değişmeyecek ---", "yellow", True))
+
+    def ilerleme(i, toplam, ad, durum):
+        _bar(i, toplam, f"{durum}: {ad[:44]}")
+
+    eylemler, hatalar = org.rename_in_place(
+        arsiv, rules, provider, dry_run=args.dry_run,
+        skip_named=not getattr(args, "force_rename", False),
+        progress=ilerleme)
+    _bar_done()
+
+    if hatalar:
+        from collections import Counter
+        sayac = Counter(hatalar)
+        print(_c(f"\n{len(hatalar)} dosyada ad üretilemedi:", "yellow", True))
+        for sebep, n in sayac.most_common(5):
+            print(_c(f"  {n}×  {sebep[:78]}", "yellow"))
+        print(_c("  Bu dosyalar mevcut adlarıyla kaldı.\n", "grey"))
+
+    if not eylemler:
+        print("Yeniden adlandırılacak dosya bulunamadı.")
+        print(_c("  Adı zaten kategori önekiyle başlayanlar atlanır; "
+                 "hepsini işlemek için --force-rename.", "grey"))
+        return 0
+
+    print(_c(f"--- {len(eylemler)} yeniden adlandırma ---", "cyan", True))
+    for a in eylemler[:60]:
+        print(f"  {_c(a.name[:70], 'grey')}")
+        print(f"    -> {a.new_name[:76]}")
+    if len(eylemler) > 60:
+        print(_c(f"  … ve {len(eylemler) - 60} tane daha", "grey"))
+
+    if args.dry_run:
+        print(_c("\nGerçekten uygulamak için -n bayrağını kaldırın.", "yellow"))
+    else:
+        basarili = sum(1 for a in eylemler if a.status == "yeniden adlandırıldı")
+        print(_c(f"\n{basarili} dosya yeniden adlandırıldı.", "green", True))
+    return 0
+
 
 def _yol_ipucu(yol):
     """Yaygın kabuk alıntılama hatalarını teşhis edip ipucu basar.

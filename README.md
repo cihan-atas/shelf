@@ -150,6 +150,8 @@ shelf organize ~/Indirilenler      # dökümanları kategorilere kopyalar
 shelf organize ~/dizin --move --rename    # taşı ve adları AI ile yenile
 shelf organize ~/dizin --threshold 30     # kural daha az karar versin
 shelf organize ~/dizin --no-ai            # yalnızca kural, ağ isteği yok
+shelf organize ~/arsiv --rename-only -n    # yerinde adlandırma, kuru
+shelf organize ~/arsiv --rename-only      # taşımaz, sadece adları yeniler
 shelf duplicates                   # kopya dosyaları bulur
 shelf duplicates --prune -n        # fazlalıkları listeler (silmez)
 shelf keywords --content           # yeni kural adayları önerir
@@ -162,7 +164,9 @@ siler, interaktif onay ister ve terminal yoksa çalışmayı reddeder.
 
 `--rename` her döküman için ayrı bir AI çağrısı demektir. Büyük arşivlerde
 kategorilendirmenin kotasını tüketebileceği için önce kategorilendirin,
-adlandırmayı ayrı bir koşuda yapın.
+adlandırmayı `--rename-only` ile ayrı bir koşuda yapın. Bu kip dosyaları
+taşımaz, kategoriyi bulunduğu klasörden okur ve yalnızca adı değiştirir —
+yani adlandırma kategorilendirmeyi bozamaz.
 
 ### Favoriler
 
